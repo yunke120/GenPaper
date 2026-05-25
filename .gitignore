@@ -1,0 +1,15 @@
+node_modules/
+web-app/frontend/node_modules/
+web-app/frontend/dist/app_backup.js
+web-app/frontend/dist/app_memory.js
+.claude/
+*.log
+.DS_Store
+__pycache__/
+.env
+
+# Added to clean up
+web-app/frontend/node_modules/
+web-app/frontend/dist/app_backup.js
+web-app/frontend/dist/app_memory.js
+.claude/settings.local.json
