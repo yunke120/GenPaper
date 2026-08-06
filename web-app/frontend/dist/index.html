@@ -309,6 +309,140 @@
         .message-info {
             background: #409eff;
         }
+
+        .page-nav {
+            display: flex;
+            background: #fff;
+            border-bottom: 1px solid #e4e7ed;
+        }
+
+        .nav-btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            background: #fff;
+            cursor: pointer;
+            font-size: 15px;
+            color: #606266;
+            border-bottom: 3px solid transparent;
+        }
+
+        .nav-btn:hover {
+            color: #409eff;
+            background: #f0f9ff;
+        }
+
+        .nav-btn.active {
+            color: #409eff;
+            border-bottom-color: #409eff;
+            font-weight: bold;
+        }
+
+        .consistency-section {
+            margin-bottom: 24px;
+        }
+
+        .consistency-section h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .checkbox-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .consistency-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .consistency-actions button {
+            margin-top: 0;
+            width: auto;
+            padding: 10px 16px;
+        }
+
+        .consistency-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .consistency-toolbar input[type="text"] {
+            flex: 1;
+            min-width: 200px;
+            padding: 8px 10px;
+            border: 1px solid #dcdfe6;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .consistency-toolbar button {
+            margin-top: 0;
+            width: auto;
+            padding: 8px 14px;
+        }
+
+        .data-table-wrap {
+            overflow-x: auto;
+            max-height: 420px;
+            overflow-y: auto;
+            background: #fff;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .data-table th,
+        .data-table td {
+            border: 1px solid #dcdfe6;
+            padding: 8px;
+            text-align: left;
+            font-size: 13px;
+            vertical-align: top;
+            word-break: break-word;
+        }
+
+        .data-table th {
+            background: #f5f7fa;
+            white-space: nowrap;
+        }
+
+        .consistency-tip {
+            margin-top: 10px;
+            color: #909399;
+            font-size: 13px;
+        }
+
+        .consistency-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #fff;
+        }
+
+        .consistency-badge.ok {
+            background: #67c23a;
+        }
+
+        .consistency-badge.diff {
+            background: #f56c6c;
+        }
     </style>
 </head>
 <body>
@@ -317,67 +451,129 @@
             <h1>单机数据包报告生成器</h1>
             <div class="subtitle">基于 Excel 数据和 Word 模板的自动化报告生成工具</div>
         </div>
+
+        <div class="page-nav">
+            <button class="nav-btn active" id="navHomeBtn" onclick="switchPage('home')">
+                📄 报告生成
+            </button>
+            <button class="nav-btn" id="navConsistencyBtn" onclick="switchPage('consistency')">
+                🔍 数据一致性对比
+            </button>
+        </div>
         
-        <div class="content">
-            <!-- 左侧：文件上传区域 -->
-            <div class="card">
-                <h2>📤 文件上传</h2>
+        <div id="homePage">
+            <div class="content">
+                <!-- 左侧：文件上传区域 -->
+                <div class="card">
+                    <h2>📤 文件上传</h2>
                 
-                <!-- Excel 文件上传 -->
-                <div class="upload-section">
-                    <h3>1. 上传 Excel 数据文件</h3>
-                    <div class="upload-area" id="excelUploadArea">
-                        <div class="upload-icon">📊</div>
-                        <div class="upload-text">拖拽 Excel 文件到此处或 <em>点击上传</em></div>
-                        <div class="upload-tip">支持 .xlsx 和 .xls 格式，文件大小不超过 50MB</div>
+                    <!-- Excel 文件上传 -->
+                    <div class="upload-section">
+                        <h3>1. 上传 Excel 数据文件</h3>
+                        <div class="upload-area" id="excelUploadArea">
+                            <div class="upload-icon">📊</div>
+                            <div class="upload-text">拖拽 Excel 文件到此处或 <em>点击上传</em></div>
+                            <div class="upload-tip">支持 .xlsx 和 .xls 格式，文件大小不超过 50MB</div>
+                        </div>
+                        <input type="file" id="excelFile" accept=".xlsx,.xls" style="display: none;">
+                        <div id="excelFileInfo" class="file-info" style="display: none;"></div>
                     </div>
-                    <input type="file" id="excelFile" accept=".xlsx,.xls" style="display: none;">
-                    <div id="excelFileInfo" class="file-info" style="display: none;"></div>
-                </div>
                 
-                <!-- Word 模板上传 -->
-                <div class="upload-section">
-                    <h3>2. 上传 Word 模板文件</h3>
-                    <div class="upload-area" id="templateUploadArea">
-                        <div class="upload-icon">📝</div>
-                        <div class="upload-text">拖拽 Word 模板到此处或 <em>点击上传</em></div>
-                        <div class="upload-tip">支持 .docx 格式，文件大小不超过 50MB</div>
+                    <!-- Word 模板上传 -->
+                    <div class="upload-section">
+                        <h3>2. 上传 Word/Excel 模板文件</h3>
+                        <div class="upload-area" id="templateUploadArea">
+                            <div class="upload-icon">📝</div>
+                            <div class="upload-text">拖拽 Word/Excel 模板到此处或 <em>点击上传</em></div>
+                            <div class="upload-tip">支持 .docx、.xlsx 和 .xls 格式，文件大小不超过 50MB</div>
+                        </div>
+                        <input type="file" id="templateFile" accept=".docx,.xlsx,.xls" style="display: none;">
+                        <div id="templateFileInfo" class="file-info" style="display: none;"></div>
                     </div>
-                    <input type="file" id="templateFile" accept=".docx" style="display: none;">
-                    <div id="templateFileInfo" class="file-info" style="display: none;"></div>
-                </div>
                 
-                <!-- 批次选择 -->
-                <div class="upload-section batch-section" id="batchSection" style="display: none;">
-                    <h3>3. 选择批次号</h3>
-                    <select id="batchSelect">
-                        <option value="">请选择批次号</option>
-                    </select>
-                    <div id="batchInfo" style="margin-top: 10px;"></div>
-                </div>
+                    <!-- 批次选择 -->
+                    <div class="upload-section batch-section" id="batchSection" style="display: none;">
+                        <h3>3. 选择批次号</h3>
+                        <select id="batchSelect">
+                            <option value="">请选择批次号</option>
+                        </select>
+                        <div id="batchInfo" style="margin-top: 10px;"></div>
+                    </div>
                 
-                <!-- 生成按钮 -->
-                <div class="action-section">
-                    <button id="generateBtn" onclick="generateReport()" disabled>
-                        🪄 生成报告
-                    </button>
-                    <div id="generateHint" class="hint" style="display: none;">
-                        ℹ️ 请先上传 Excel 数据文件和 Word 模板文件，并选择批次号
+                    <!-- 生成按钮 -->
+                    <div class="action-section">
+                        <button id="generateBtn" onclick="generateReport()" disabled>
+                            🪄 生成报告
+                        </button>
+                        <div id="generateHint" class="hint" style="display: none;">
+                            ℹ️ 请先上传 Excel 数据文件和 Word 模板文件，并选择批次号
+                        </div>
+                    </div>
+                </div>
+            
+                <!-- 右侧：结果展示区域 -->
+                <div class="card">
+                    <h2>📊 生成结果</h2>
+                    <div class="result-area" id="resultArea">
+                        <div class="empty-state">
+                            <div class="empty-icon">📋</div>
+                            <p>暂无数据</p>
+                            <p style="margin-top: 10px; font-size: 14px;">
+                                上传 Excel 文件后可以预览数据，生成报告后会显示结果
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
-            
-            <!-- 右侧：结果展示区域 -->
-            <div class="card">
-                <h2>📊 生成结果</h2>
-                <div class="result-area" id="resultArea">
-                    <div class="empty-state">
-                        <div class="empty-icon">📋</div>
-                        <p>暂无数据</p>
-                        <p style="margin-top: 10px; font-size: 14px;">
-                            上传 Excel 文件后可以预览数据，生成报告后会显示结果
-                        </p>
+        </div>
+
+        <div id="consistencyPage" style="display: none;">
+            <div class="content">
+                <div class="card">
+                    <h2>📊 数据与配置</h2>
+
+                    <div class="consistency-section">
+                        <h3>1. 上传 Excel 数据文件</h3>
+                        <div class="upload-area" id="consistencyExcelUploadArea">
+                            <div class="upload-icon">📊</div>
+                            <div class="upload-text">拖拽 Excel 文件到此处或 <em>点击上传</em></div>
+                            <div class="upload-tip">支持 .xlsx 和 .xls 格式，文件大小不超过 50MB</div>
+                        </div>
+                        <input type="file" id="consistencyExcelFile" accept=".xlsx,.xls" style="display: none;">
+                        <div id="consistencyExcelFileInfo" class="file-info" style="display: none;"></div>
                     </div>
+
+                    <div class="consistency-section" id="consistencyBatchSection" style="display: none;">
+                        <h3>2. 勾选对比批次</h3>
+                        <div class="checkbox-list" id="consistencyBatchList"></div>
+                    </div>
+
+                    <div class="consistency-section" id="consistencyActionSection" style="display: none;">
+                        <h3>3. 配置操作</h3>
+                        <div class="consistency-actions">
+                            <button id="consistencyExportConfigBtn" onclick="exportConsistencyConfig()">📥 导出配置</button>
+                            <button onclick="document.getElementById('consistencyImportFile').click()">📤 导入配置</button>
+                            <button id="consistencyExportWordBtn" class="download-btn" onclick="exportConsistencyWord()">📄 导出Word对比</button>
+                        </div>
+                        <input type="file" id="consistencyImportFile" accept=".json" style="display: none;">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>🔍 参数选择</h2>
+
+                    <div class="consistency-toolbar" id="consistencyParamToolbar" style="display: none;">
+                        <button onclick="toggleAllConsistencyParams(true)">全选</button>
+                        <button onclick="toggleAllConsistencyParams(false)">清空</button>
+                    </div>
+
+                    <div class="data-table-wrap" id="consistencyParamTableWrap">
+                        <div class="empty-state">
+                            <div class="empty-icon">📋</div>
+                            <p>请先上传 Excel 数据文件</p>
+                        </div>
+                    </div>
+                    <div class="consistency-tip" id="consistencySelectedCount"></div>
                 </div>
             </div>
         </div>

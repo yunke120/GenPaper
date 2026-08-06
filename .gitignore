@@ -13,3 +13,26 @@ web-app/frontend/node_modules/
 web-app/frontend/dist/app_backup.js
 web-app/frontend/dist/app_memory.js
 .claude/settings.local.json
+
+# 打包产物与二进制资产
+packaging/
+*.exe
+*.svg
+*.ico
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.zip
+*.rar
+*.7z
+
+# Office 文档与临时文件
+*.xls
+*.xlsx
+*.doc
+*.docx
+*.ppt
+*.pptx
+~$*

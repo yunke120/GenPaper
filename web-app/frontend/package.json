@@ -4,21 +4,23 @@
   "private": true,
   "scripts": {
     "serve": "vue-cli-service serve",
+    "dev": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint"
   },
   "dependencies": {
-    "vue": "^3.3.4",
-    "vue-router": "^4.2.4",
-    "element-plus": "^2.3.8",
+    "@element-plus/icons-vue": "^2.1.0",
     "axios": "^1.5.0",
-    "@element-plus/icons-vue": "^2.1.0"
+    "element-plus": "^2.3.8",
+    "vue": "^3.3.4",
+    "vue-router": "^4.2.4"
   },
   "devDependencies": {
-    "@vue/cli-service": "^5.0.8",
+    "@babel/eslint-parser": "^7.29.7",
     "@vue/cli-plugin-babel": "^5.0.8",
     "@vue/cli-plugin-eslint": "^5.0.8",
     "@vue/cli-plugin-router": "^5.0.8",
+    "@vue/cli-service": "^5.0.8",
     "eslint": "^8.47.0",
     "eslint-plugin-vue": "^9.17.0"
   },

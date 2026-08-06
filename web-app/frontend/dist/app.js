@@ -10,6 +10,7 @@ let currentBatches = [];
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
     initUpload();
+    initConsistency();
     checkStatus();
     
     // 每30秒检查一次状态
@@ -52,7 +53,7 @@ function initUpload() {
 }
 
 // 设置拖拽上传
-function setupDragDrop(uploadArea, fileInput, type) {
+function setupDragDrop(uploadArea, fileInput, type, dropHandler) {
     uploadArea.addEventListener('dragover', function(e) {
         e.preventDefault();
         uploadArea.style.borderColor = '#409eff';
@@ -70,9 +71,22 @@ function setupDragDrop(uploadArea, fileInput, type) {
         uploadArea.style.background = '#fafafa';
         
         if (e.dataTransfer.files.length > 0) {
-            handleFileUpload(e.dataTransfer.files[0], type);
+            if (dropHandler) {
+                dropHandler(e.dataTransfer.files[0]);
+            } else {
+                handleFileUpload(e.dataTransfer.files[0], type);
+            }
         }
     });
+}
+
+// 根据文件名返回报告的 MIME 类型
+function getReportMimeType(filename) {
+    const lower = (filename || '').toLowerCase();
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
 // 处理文件上传
@@ -92,9 +106,11 @@ async function handleFileUpload(file, type) {
             return;
         }
     } else {
-        const isDocx = file.name.toLowerCase().endsWith('.docx');
-        if (!isDocx) {
-            alert('只能上传 Word 文件 (.docx)');
+        const name = file.name.toLowerCase();
+        const isDocx = name.endsWith('.docx');
+        const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+        if (!isDocx && !isExcel) {
+            alert('只能上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件');
             return;
         }
     }
@@ -238,7 +254,7 @@ async function saveReportFromResponse(data) {
         }
         
         // 创建 Blob
-        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        const blob = new Blob([bytes], { type: getReportMimeType(data.output_filename) });
         
         // 创建下载链接
         const url = window.URL.createObjectURL(blob);
@@ -291,7 +307,7 @@ function saveReportAgain(filename, base64Content) {
             bytes[i] = binaryString.charCodeAt(i);
         }
         
-        const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        const blob = new Blob([bytes], { type: getReportMimeType(filename) });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -342,4 +358,325 @@ function showMessage(text, type = 'info') {
             message.parentNode.removeChild(message);
         }
     }, 3000);
+}
+
+// ============ 数据一致性对比 ============
+let consistencyExcelFile = null;
+let consistencyBatches = [];
+let consistencyParams = [];
+let consistencySelectedBatches = new Set();
+let consistencySelectedParamIds = new Set();
+
+function switchPage(name) {
+    const homePage = document.getElementById('homePage');
+    const consistencyPage = document.getElementById('consistencyPage');
+    const homeBtn = document.getElementById('navHomeBtn');
+    const consistencyBtn = document.getElementById('navConsistencyBtn');
+    const showHome = name === 'home';
+    homePage.style.display = showHome ? '' : 'none';
+    consistencyPage.style.display = showHome ? 'none' : '';
+    homeBtn.classList.toggle('active', showHome);
+    consistencyBtn.classList.toggle('active', !showHome);
+}
+
+function initConsistency() {
+    const uploadArea = document.getElementById('consistencyExcelUploadArea');
+    const fileInput = document.getElementById('consistencyExcelFile');
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+    setupDragDrop(uploadArea, fileInput, 'consistency-excel', handleConsistencyExcelUpload);
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleConsistencyExcelUpload(e.target.files[0]);
+        }
+    });
+
+    document.getElementById('consistencyImportFile').addEventListener('change', importConsistencyConfig);
+}
+
+async function handleConsistencyExcelUpload(file) {
+    if (file.size > 50 * 1024 * 1024) {
+        alert('文件大小不能超过 50MB');
+        return;
+    }
+
+    const name = file.name.toLowerCase();
+    if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+        alert('只能上传 Excel 文件 (.xlsx, .xls)');
+        return;
+    }
+
+    const infoEl = document.getElementById('consistencyExcelFileInfo');
+    infoEl.innerHTML = '正在上传...';
+    infoEl.style.display = 'block';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/upload/excel', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            consistencyExcelFile = data;
+            infoEl.innerHTML = `✅ ${data.filename} - 上传成功`;
+            showMessage('Excel 文件上传成功!', 'success');
+            await loadConsistencyParameters(data.file_id);
+        } else {
+            infoEl.innerHTML = `❌ ${data.error || '上传失败'}`;
+            showMessage(data.error || '上传失败', 'error');
+        }
+    } catch (error) {
+        infoEl.innerHTML = '❌ 上传失败';
+        showMessage('上传失败: ' + error.message, 'error');
+    }
+}
+
+async function loadConsistencyParameters(fileId) {
+    try {
+        const response = await fetch('/api/consistency/parameters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ excel_file_id: fileId })
+        });
+        const data = await response.json();
+
+        if (!data.success) {
+            showMessage(data.error || '读取参数失败', 'error');
+            return;
+        }
+
+        consistencyBatches = data.batch_numbers || [];
+        consistencyParams = data.parameters || [];
+        consistencySelectedBatches = new Set(consistencyBatches);
+        consistencySelectedParamIds = new Set();
+
+        document.getElementById('consistencyBatchSection').style.display = 'block';
+        document.getElementById('consistencyActionSection').style.display = 'block';
+        document.getElementById('consistencyParamToolbar').style.display = 'flex';
+
+        renderConsistencyBatches();
+        renderConsistencyParams();
+        updateConsistencyButtons();
+    } catch (error) {
+        showMessage('读取参数时出错: ' + error.message, 'error');
+    }
+}
+
+function renderConsistencyBatches() {
+    const list = document.getElementById('consistencyBatchList');
+    list.innerHTML = '';
+
+    consistencyBatches.forEach((batch) => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = consistencySelectedBatches.has(batch);
+        checkbox.onchange = () => {
+            if (checkbox.checked) {
+                consistencySelectedBatches.add(batch);
+            } else {
+                consistencySelectedBatches.delete(batch);
+            }
+            updateConsistencyButtons();
+        };
+
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(batch));
+        list.appendChild(label);
+    });
+}
+
+function renderConsistencyParams() {
+    const wrap = document.getElementById('consistencyParamTableWrap');
+    const params = consistencyParams;
+
+    if (!params.length) {
+        wrap.innerHTML = '<div class="empty-state"><p>未找到匹配的参数</p></div>';
+        updateConsistencySelectedCount();
+        return;
+    }
+
+    let html = '<table class="data-table"><thead><tr>' +
+        '<th style="width:40px"></th><th>参数ID</th><th>Description</th>' +
+        '</tr></thead><tbody>';
+
+    params.forEach((param) => {
+        const checked = consistencySelectedParamIds.has(param.id) ? 'checked' : '';
+        html += `<tr><td><input type="checkbox" data-param-id="${escapeHtml(param.id)}" ${checked}></td>` +
+                `<td>${escapeHtml(param.id)}</td>` +
+                `<td>${escapeHtml(param.description)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            const id = checkbox.dataset.paramId;
+            if (checkbox.checked) {
+                consistencySelectedParamIds.add(id);
+            } else {
+                consistencySelectedParamIds.delete(id);
+            }
+            updateConsistencyButtons();
+            updateConsistencySelectedCount();
+        });
+    });
+
+    updateConsistencySelectedCount();
+}
+
+function toggleAllConsistencyParams(checked) {
+    consistencyParams.forEach((param) => {
+        if (checked) {
+            consistencySelectedParamIds.add(param.id);
+        } else {
+            consistencySelectedParamIds.delete(param.id);
+        }
+    });
+    renderConsistencyParams();
+    updateConsistencyButtons();
+}
+
+function updateConsistencySelectedCount() {
+    document.getElementById('consistencySelectedCount').textContent =
+        `已选 ${consistencySelectedParamIds.size} 个参数`;
+}
+
+function updateConsistencyButtons() {
+    const exportBtn = document.getElementById('consistencyExportWordBtn');
+    exportBtn.disabled =
+        consistencySelectedBatches.size === 0 || consistencySelectedParamIds.size === 0;
+}
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function exportConsistencyConfig() {
+    const config = {
+        batch_numbers: [...consistencySelectedBatches],
+        parameter_ids: [...consistencySelectedParamIds]
+    };
+    const blob = new Blob([JSON.stringify(config, null, 2)], {
+        type: 'application/json'
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `一致性对比配置_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    showMessage('配置已导出', 'success');
+}
+
+function importConsistencyConfig(event) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) {
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const config = JSON.parse(reader.result);
+            const batches = Array.isArray(config.batch_numbers) ? config.batch_numbers : [];
+            const ids = Array.isArray(config.parameter_ids) ? config.parameter_ids : [];
+            const validBatches = new Set(consistencyBatches);
+            const validIds = new Set(consistencyParams.map((param) => param.id));
+
+            consistencySelectedBatches = new Set(
+                batches.filter((batch) => validBatches.has(batch))
+            );
+            consistencySelectedParamIds = new Set(
+                ids.filter((id) => validIds.has(id))
+            );
+
+            renderConsistencyBatches();
+            renderConsistencyParams();
+            updateConsistencyButtons();
+            showMessage('配置已导入', 'success');
+        } catch (e) {
+            showMessage('配置文件格式不正确', 'error');
+        }
+    };
+    reader.readAsText(file);
+}
+
+async function exportConsistencyWord() {
+    if (!consistencyExcelFile) {
+        showMessage('请先上传 Excel 数据文件', 'warning');
+        return;
+    }
+    if (consistencySelectedBatches.size === 0 || consistencySelectedParamIds.size === 0) {
+        showMessage('请先勾选批次和参数', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('consistencyExportWordBtn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '生成中...';
+
+    try {
+        const response = await fetch('/api/consistency/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                excel_file_id: consistencyExcelFile.file_id,
+                batch_numbers: [...consistencySelectedBatches],
+                parameter_ids: [...consistencySelectedParamIds]
+            })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            downloadDocxFromData(data);
+            const stats = data.statistics || {};
+            showMessage(
+                `对比完成: ${stats.parameter_count} 个参数, ${stats.inconsistent_count} 项不一致`,
+                'success'
+            );
+        } else {
+            showMessage(data.error || '生成失败', 'error');
+        }
+    } catch (error) {
+        showMessage('生成一致性报告时出错: ' + error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        updateConsistencyButtons();
+    }
+}
+
+function downloadDocxFromData(data) {
+    const binaryString = atob(data.report_content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const blob = new Blob([bytes], { type: getReportMimeType(data.output_filename) });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = data.output_filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
 }

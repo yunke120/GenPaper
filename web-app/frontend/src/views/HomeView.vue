@@ -52,7 +52,7 @@
           
           <!-- Word 模板上传 -->
           <div class="upload-section">
-            <h3>2. 上传 Word 模板文件</h3>
+            <h3>2. 上传 Word/Excel 模板文件</h3>
             <el-upload
               class="upload-demo"
               drag
@@ -61,15 +61,15 @@
               :on-error="handleTemplateError"
               :before-upload="beforeTemplateUpload"
               :show-file-list="false"
-              accept=".docx"
+              accept=".docx,.xlsx,.xls"
             >
               <el-icon class="el-icon--upload"><upload-filled /></el-icon>
               <div class="el-upload__text">
-                拖拽 Word 模板到此处或 <em>点击上传</em>
+                拖拽 Word/Excel 模板到此处或 <em>点击上传</em>
               </div>
               <template #tip>
                 <div class="el-upload__tip">
-                  支持 .docx 格式，文件大小不超过 50MB
+                  支持 .docx、.xlsx 和 .xls 格式，文件大小不超过 50MB
                 </div>
               </template>
             </el-upload>
@@ -368,12 +368,13 @@ export default {
     },
     
     beforeTemplateUpload(file) {
-      const isDocx = file.type.includes('document') || 
-                    file.name.endsWith('.docx')
+      const name = file.name.toLowerCase()
+      const isDocx = file.type.includes('document') || name.endsWith('.docx')
+      const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls')
       const isLt50M = file.size / 1024 / 1024 < 50
       
-      if (!isDocx) {
-        ElMessage.error('只能上传 Word 文档 (.docx)!')
+      if (!isDocx && !isExcel) {
+        ElMessage.error('只能上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件!')
         return false
       }
       if (!isLt50M) {
@@ -472,18 +473,32 @@ export default {
     },
     
     downloadReport() {
-      if (!this.generationResult) {
+      if (!this.generationResult || !this.generationResult.report_content) {
         ElMessage.warning('没有可下载的报告')
         return
       }
+
+      const binaryString = atob(this.generationResult.report_content)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
       
-      const url = `/api/download/${this.generationResult.output_filename}`
+      const filename = this.generationResult.output_filename
+      const isExcel = filename.toLowerCase().endsWith('.xlsx') ||
+                      filename.toLowerCase().endsWith('.xls')
+      const mimeType = isExcel
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const blob = new Blob([bytes], { type: mimeType })
+      const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = this.generationResult.output_filename
+      link.download = filename
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
     }
   }
 }
@@ -589,4 +604,17 @@ export default {
 
 .empty-state {
   text-align: center;
-  padding: 60px
+  padding: 60px 0;
+}
+
+.preview-note {
+  margin-top: 10px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.preview-section h4 {
+  margin: 15px 0 10px;
+  color: #606266;
+}
+</style>

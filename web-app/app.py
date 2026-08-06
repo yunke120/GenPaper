@@ -67,8 +67,14 @@ def allowed_file(filename, file_type):
     if file_type == 'excel':
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'xlsx', 'xls'}
     elif file_type == 'template':
-        return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'docx'}
+        return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'docx', 'xlsx', 'xls'}
     return False
+
+
+def get_template_type(filename):
+    """根据模板文件名返回模板类型: excel 或 docx"""
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    return 'excel' if ext in {'xlsx', 'xls'} else 'docx'
 
 @app.route('/')
 def index():
@@ -133,7 +139,7 @@ def upload_excel():
 
 @app.route('/api/upload/template', methods=['POST'])
 def upload_template():
-    """上传 Word 模板文件（内存处理）"""
+    """上传 Word/Excel 模板文件（内存处理）"""
     if 'file' not in request.files:
         return jsonify({'error': '没有文件上传'}), 400
     
@@ -142,7 +148,7 @@ def upload_template():
         return jsonify({'error': '没有选择文件'}), 400
     
     if not allowed_file(file.filename, 'template'):
-        return jsonify({'error': '文件类型不支持，请上传 Word 文件 (.docx)'}), 400
+        return jsonify({'error': '文件类型不支持，请上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件'}), 400
     
     try:
         # 读取文件内容到内存
@@ -154,6 +160,7 @@ def upload_template():
         return jsonify({
             'success': True,
             'filename': file.filename,
+            'file_type': get_template_type(file.filename),
             'file_id': file_id
         })
     
@@ -196,20 +203,24 @@ def generate():
         if batch_number not in excel_data['batch_numbers']:
             return jsonify({'error': f'批次号 "{batch_number}" 不存在'}), 400
         
-        # 生成输出文件名
-        output_filename = f"数据报告_{batch_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+        # 根据模板类型生成输出文件名
+        template_filename = template_file['filename']
+        template_type = get_template_type(template_filename)
+        output_ext = '.xlsx' if template_type == 'excel' else '.docx'
+        output_filename = f"数据报告_{batch_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{output_ext}"
         
         # 准备输入输出流
         template_stream = io.BytesIO(template_file['content'])
         output_stream = io.BytesIO()
         
         # 生成报告到内存
-        success, param_count, doc_count = report_generator.generate_report(
+        success, param_count, doc_count, error_msg = report_generator.generate_report(
             template_stream,
             batch_number,
             excel_data['parameters'],
             excel_data['documents'],
-            output_stream
+            output_stream,
+            template_filename
         )
         
         if success:
@@ -222,6 +233,7 @@ def generate():
             return jsonify({
                 'success': True,
                 'output_filename': output_filename,
+                'file_type': template_type,
                 'report_content': report_base64,  # base64编码的报告内容
                 'statistics': {
                     'batch_number': batch_number,
@@ -231,10 +243,107 @@ def generate():
                 }
             })
         else:
-            return jsonify({'error': '报告生成失败'}), 500
+            return jsonify({'error': error_msg or '报告生成失败'}), 500
     
     except Exception as e:
         return jsonify({'error': f'生成报告时出错: {str(e)}'}), 500
+
+@app.route('/api/consistency/parameters', methods=['POST'])
+def consistency_parameters():
+    """读取 Excel 数据中的所有批次与参数（含描述），用于数据一致性对比"""
+    data = request.json
+    if not data or 'excel_file_id' not in data:
+        return jsonify({'error': '缺少 Excel 文件 ID'}), 400
+
+    excel_file = get_from_cache(data['excel_file_id'])
+    if not excel_file:
+        return jsonify({'error': 'Excel 文件不存在或已过期'}), 404
+
+    try:
+        import report_generator
+        import io
+
+        excel_stream = io.BytesIO(excel_file['content'])
+        excel_data = report_generator.parse_excel_data(excel_stream)
+
+        parameters = [
+            {
+                'id': param['id'],
+                'description': param['description'],
+                'values': param['data']
+            }
+            for param in excel_data['parameters']
+        ]
+
+        return jsonify({
+            'success': True,
+            'batch_numbers': excel_data['batch_numbers'],
+            'parameters': parameters
+        })
+    except Exception as e:
+        return jsonify({'error': f'读取参数失败: {str(e)}'}), 500
+
+@app.route('/api/consistency/compare', methods=['POST'])
+def consistency_compare():
+    """按选中的批次与参数生成数据一致性对比 Word 报告"""
+    data = request.json
+    if not data:
+        return jsonify({'error': '请求数据为空'}), 400
+
+    excel_file_id = data.get('excel_file_id')
+    batch_numbers = data.get('batch_numbers') or []
+    parameter_ids = data.get('parameter_ids') or []
+
+    if not excel_file_id:
+        return jsonify({'error': '缺少 Excel 文件 ID'}), 400
+    if not batch_numbers:
+        return jsonify({'error': '请至少选择一个批次'}), 400
+    if not parameter_ids:
+        return jsonify({'error': '请至少选择一个参数'}), 400
+
+    excel_file = get_from_cache(excel_file_id)
+    if not excel_file:
+        return jsonify({'error': 'Excel 文件不存在或已过期'}), 404
+
+    try:
+        import report_generator
+        import io
+        import base64
+
+        excel_stream = io.BytesIO(excel_file['content'])
+        excel_data = report_generator.parse_excel_data(excel_stream)
+
+        invalid_batches = [b for b in batch_numbers if b not in excel_data['batch_numbers']]
+        if invalid_batches:
+            return jsonify({'error': f'批次号不存在: {", ".join(invalid_batches)}'}), 400
+
+        output_stream = io.BytesIO()
+        success, param_count, inconsistent_count, error_msg = report_generator.generate_consistency_report(
+            excel_data['parameters'],
+            batch_numbers,
+            parameter_ids,
+            output_stream
+        )
+
+        if not success:
+            return jsonify({'error': error_msg or '生成一致性报告失败'}), 500
+
+        output_filename = f"数据一致性对比_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+        report_base64 = base64.b64encode(output_stream.getvalue()).decode('utf-8')
+
+        return jsonify({
+            'success': True,
+            'output_filename': output_filename,
+            'file_type': 'docx',
+            'report_content': report_base64,
+            'statistics': {
+                'batch_count': len(batch_numbers),
+                'parameter_count': param_count,
+                'inconsistent_count': inconsistent_count
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': f'生成一致性报告时出错: {str(e)}'}), 500
 
 @app.route('/api/preview', methods=['POST'])
 def preview_data():

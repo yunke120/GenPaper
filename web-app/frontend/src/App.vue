@@ -7,9 +7,19 @@
             <el-icon><Document /></el-icon>
             单机数据包报告生成器
           </h1>
-          <div class="subtitle">基于 Excel 数据和 Word 模板的自动化报告生成工具</div>
+          <div class="subtitle">基于 Excel 数据和 Word/Excel 模板的自动化报告生成工具</div>
         </div>
       </el-header>
+
+      <el-menu
+        mode="horizontal"
+        router
+        :default-active="$route.path"
+        class="nav-menu"
+      >
+        <el-menu-item index="/">报告生成</el-menu-item>
+        <el-menu-item index="/consistency">数据一致性对比</el-menu-item>
+      </el-menu>
       
       <el-main>
         <router-view />
@@ -93,6 +103,11 @@ export default {
   margin-top: 5px;
   font-size: 14px;
   opacity: 0.9;
+}
+
+.nav-menu {
+  justify-content: center;
+  border-bottom: 1px solid #e4e7ed;
 }
 
 .el-main {
