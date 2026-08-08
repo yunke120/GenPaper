@@ -61,7 +61,7 @@
               :on-error="handleTemplateError"
               :before-upload="beforeTemplateUpload"
               :show-file-list="false"
-              accept=".docx,.xlsx,.xls"
+              accept=".docx,.xlsx"
             >
               <el-icon class="el-icon--upload"><upload-filled /></el-icon>
               <div class="el-upload__text">
@@ -69,7 +69,7 @@
               </div>
               <template #tip>
                 <div class="el-upload__tip">
-                  支持 .docx、.xlsx 和 .xls 格式，文件大小不超过 50MB
+                  支持 .docx 和 .xlsx 格式，文件大小不超过 50MB
                 </div>
               </template>
             </el-upload>
@@ -370,11 +370,11 @@ export default {
     beforeTemplateUpload(file) {
       const name = file.name.toLowerCase()
       const isDocx = file.type.includes('document') || name.endsWith('.docx')
-      const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls')
+      const isExcel = name.endsWith('.xlsx')
       const isLt50M = file.size / 1024 / 1024 < 50
       
       if (!isDocx && !isExcel) {
-        ElMessage.error('只能上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件!')
+        ElMessage.error('只能上传 Word (.docx) 或 Excel (.xlsx) 模板文件!')
         return false
       }
       if (!isLt50M) {

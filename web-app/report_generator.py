@@ -273,29 +273,11 @@ def _replace_excel_cell(value, context, doc_data, batch):
     return _PLACEHOLDER_RE.sub(replace_one, value), param_count, doc_count
 
 
-def _load_xls_workbook(template_file):
-    """读取 .xls 模板，转换为 openpyxl Workbook（不保留 .xls 原生格式）。"""
-    try:
-        sheets = pd.read_excel(template_file, sheet_name=None, header=None)
-    except Exception as e:
-        raise ValueError(f"无法读取 .xls 模板，请安装 xlrd 或改用 .xlsx 模板: {e}")
-
-    from openpyxl import Workbook
-    wb = Workbook()
-    wb.remove(wb.active)
-    for sheet_name, frame in sheets.items():
-        ws = wb.create_sheet(title=str(sheet_name)[:31])
-        for row_idx, row in enumerate(frame.itertuples(index=False, name=None), start=1):
-            for col_idx, value in enumerate(row, start=1):
-                if pd.notna(value):
-                    ws.cell(row=row_idx, column=col_idx, value=value)
-    return wb
-
-
 def generate_excel_report(template_file, batch, param_data, doc_data, output_file,
                           template_filename=None):
     """
-    使用 Excel 模板生成数据报告：遍历所有 sheet 的所有单元格并替换占位符。
+    使用 .xlsx 模板生成数据报告：保留原工作簿结构与样式，
+    仅替换单元格文本中的占位符。
 
     Returns:
         tuple: (success, param_replacements, doc_replacements, error)
@@ -309,9 +291,8 @@ def generate_excel_report(template_file, batch, param_data, doc_data, output_fil
 
         ext = os.path.splitext(str(template_filename))[1].lower() if template_filename else ''
         if ext == '.xls':
-            wb = _load_xls_workbook(template_file)
-        else:
-            wb = load_workbook(template_file, data_only=False)
+            raise ValueError('为保留原结构样式，Excel 模板请使用 .xlsx 格式，不支持直接编辑 .xls')
+        wb = load_workbook(template_file, data_only=False)
 
         param_replacements = 0
         doc_replacements = 0
@@ -320,6 +301,9 @@ def generate_excel_report(template_file, batch, param_data, doc_data, output_fil
                 for cell in row:
                     value = cell.value
                     if not isinstance(value, str) or '{{' not in value:
+                        continue
+                    if cell.data_type == 'f':
+                        # 公式单元格仅保留原样，避免替换内容破坏公式结构
                         continue
                     new_value, p_count, d_count = _replace_excel_cell(
                         value, context, doc_data, batch

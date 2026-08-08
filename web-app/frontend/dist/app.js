@@ -108,9 +108,9 @@ async function handleFileUpload(file, type) {
     } else {
         const name = file.name.toLowerCase();
         const isDocx = name.endsWith('.docx');
-        const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
+        const isExcel = name.endsWith('.xlsx');
         if (!isDocx && !isExcel) {
-            alert('只能上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件');
+            alert('只能上传 Word (.docx) 或 Excel (.xlsx) 模板文件');
             return;
         }
     }

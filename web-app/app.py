@@ -67,14 +67,14 @@ def allowed_file(filename, file_type):
     if file_type == 'excel':
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'xlsx', 'xls'}
     elif file_type == 'template':
-        return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'docx', 'xlsx', 'xls'}
+        return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'docx', 'xlsx'}
     return False
 
 
 def get_template_type(filename):
     """根据模板文件名返回模板类型: excel 或 docx"""
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
-    return 'excel' if ext in {'xlsx', 'xls'} else 'docx'
+    return 'excel' if ext in {'xlsx'} else 'docx'
 
 @app.route('/')
 def index():
@@ -148,7 +148,7 @@ def upload_template():
         return jsonify({'error': '没有选择文件'}), 400
     
     if not allowed_file(file.filename, 'template'):
-        return jsonify({'error': '文件类型不支持，请上传 Word (.docx) 或 Excel (.xlsx, .xls) 模板文件'}), 400
+        return jsonify({'error': '文件类型不支持，请上传 Word (.docx) 或 Excel (.xlsx) 模板文件'}), 400
     
     try:
         # 读取文件内容到内存
