@@ -499,6 +499,16 @@ def generate_report(template_file, batch, param_data, doc_data, output_file,
             value = param['data'].get(batch, f'[数据缺失: {batch}]')
             context[param_id] = value
 
+        # 文档占位符直接加入上下文，兼容 Word 模板中的 {{Fxt_4}}、{{Sj_12}}、{{Doc_3}} 形式
+        for doc_key in doc_data.get('通用文档', {}):
+            doc_value = get_document_value(doc_data, doc_key, batch)
+            if doc_value:
+                context[doc_key] = doc_value
+        for doc_key in doc_data.get('单机文档', {}).get(batch, {}):
+            doc_value = get_document_value(doc_data, doc_key, batch)
+            if doc_value:
+                context[doc_key] = doc_value
+
         def doc_lookup(ph):
             value = get_document_value(doc_data, ph, batch)
             if value:
