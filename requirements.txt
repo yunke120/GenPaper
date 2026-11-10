@@ -1,0 +1,13 @@
+# Web 后端
+flask>=3.0,<4
+
+# Excel 数据解析
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0.1            # 仅解析 .xls 数据文件需要；Excel 模板不支持 .xls
+
+# Word 模板渲染
+docxtpl>=0.16,<0.21    # 兜底 XML 清洗逻辑与 docxtpl 的 patch_xml/render_xml_part 对应，升级大版本时需复核 report_generator._normalize_xml_for_jinja
+python-docx>=1.1
+jinja2>=3.1
+lxml>=4.9

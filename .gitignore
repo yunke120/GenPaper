@@ -1,18 +1,10 @@
+# 依赖与构建
 node_modules/
-web-app/frontend/node_modules/
-web-app/frontend/dist/app_backup.js
-web-app/frontend/dist/app_memory.js
-.claude/
+__pycache__/
 *.log
 .DS_Store
-__pycache__/
 .env
-
-# Added to clean up
-web-app/frontend/node_modules/
-web-app/frontend/dist/app_backup.js
-web-app/frontend/dist/app_memory.js
-.claude/settings.local.json
+.claude/
 
 # 打包产物与二进制资产
 packaging/
@@ -28,7 +20,7 @@ packaging/
 *.rar
 *.7z
 
-# Office 文档与临时文件
+# Office 文档与临时文件（templates/ 下的模板文件除外，作为解析格式的基准样例）
 *.xls
 *.xlsx
 *.doc
@@ -36,3 +28,8 @@ packaging/
 *.ppt
 *.pptx
 ~$*
+!templates/*.xlsx
+!templates/*.docx
+
+# 本地助手工作记忆（不入库）
+.workbuddy/

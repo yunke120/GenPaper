@@ -6,6 +6,8 @@ let currentExcelFile = null;
 let currentTemplateFile = null;
 let currentBatch = '';
 let currentBatches = [];
+// 最近一次生成的报告（用于"重新保存"，避免把 base64 内容拼进 DOM 属性）
+let lastGeneratedReport = null;
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
@@ -89,6 +91,27 @@ function getReportMimeType(filename) {
     return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
+// 将 base64 内容解码并触发浏览器下载
+function downloadBase64AsFile(base64Content, filename) {
+    const binaryString = atob(base64Content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const blob = new Blob([bytes], { type: getReportMimeType(filename) });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+
+    document.body.appendChild(a);
+    a.click();
+
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
+
 // 处理文件上传
 async function handleFileUpload(file, type) {
     // 检查文件大小
@@ -136,21 +159,21 @@ async function handleFileUpload(file, type) {
         if (data.success) {
             if (type === 'excel') {
                 currentExcelFile = data;
-                infoEl.innerHTML = `✅ ${data.filename} - 上传成功`;
-                
+                infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
+
                 // 更新批次选择
                 if (data.data && data.data.batch_numbers) {
                     updateBatchSelect(data.data.batch_numbers);
                 }
             } else {
                 currentTemplateFile = data;
-                infoEl.innerHTML = `✅ ${data.filename} - 上传成功`;
+                infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
             }
-            
+
             updateGenerateButton();
             showMessage('文件上传成功!', 'success');
         } else {
-            infoEl.innerHTML = `❌ ${data.error || '上传失败'}`;
+            infoEl.innerHTML = `❌ ${escapeHtml(data.error || '上传失败')}`;
             showMessage(data.error || '上传失败', 'error');
         }
     } catch (error) {
@@ -223,6 +246,10 @@ async function generateReport() {
         
         if (data.success) {
             // 从响应中获取报告内容并保存
+            lastGeneratedReport = {
+                filename: data.output_filename,
+                content: data.report_content
+            };
             await saveReportFromResponse(data);
             showResult(data);
             showMessage('报告生成成功!', 'success');
@@ -244,32 +271,9 @@ async function saveReportFromResponse(data) {
         alert('报告内容为空');
         return;
     }
-    
+
     try {
-        // Base64 解码
-        const binaryString = atob(data.report_content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        // 创建 Blob
-        const blob = new Blob([bytes], { type: getReportMimeType(data.output_filename) });
-        
-        // 创建下载链接
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = data.output_filename;
-        
-        // 触发点击下载（会弹出保存对话框）
-        document.body.appendChild(a);
-        a.click();
-        
-        // 清理
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        
+        downloadBase64AsFile(data.report_content, data.output_filename);
     } catch (error) {
         console.error('保存报告失败:', error);
         alert('保存报告失败: ' + error.message);
@@ -279,18 +283,19 @@ async function saveReportFromResponse(data) {
 // 显示结果
 function showResult(data) {
     const resultArea = document.getElementById('resultArea');
+    const stats = data.statistics || {};
     resultArea.innerHTML = `
         <div style="text-align: center; padding: 20px;">
             <div style="font-size: 48px; color: #67c23a; margin-bottom: 15px;">✅</div>
             <h3 style="color: #67c23a; margin-bottom: 10px;">报告生成成功!</h3>
-            <p style="color: #606266; margin-bottom: 5px;">批次: ${data.statistics.batch_number}</p>
-            <p style="color: #606266; margin-bottom: 5px;">参数替换: ${data.statistics.parameter_replacements}</p>
-            <p style="color: #606266; margin-bottom: 5px;">文档替换: ${data.statistics.document_replacements}</p>
-            <p style="color: #606266; margin-bottom: 20px;">总替换数: ${data.statistics.total_replacements}</p>
+            <p style="color: #606266; margin-bottom: 5px;">批次: ${escapeHtml(String(stats.batch_number || ''))}</p>
+            <p style="color: #606266; margin-bottom: 5px;">参数替换: ${escapeHtml(String(stats.parameter_replacements || 0))}</p>
+            <p style="color: #606266; margin-bottom: 5px;">文档替换: ${escapeHtml(String(stats.document_replacements || 0))}</p>
+            <p style="color: #606266; margin-bottom: 20px;">总替换数: ${escapeHtml(String(stats.total_replacements || 0))}</p>
             <p style="color: #909399; font-size: 14px; margin-top: 10px;">
                 文件已弹出保存对话框，请选择保存位置
             </p>
-            <button onclick="saveReportAgain('${data.output_filename}', '${data.report_content}')" 
+            <button onclick="saveReportAgain()"
                     style="background: #409eff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px;">
                 ⬇️ 重新保存报告
             </button>
@@ -299,26 +304,14 @@ function showResult(data) {
 }
 
 // 重新保存报告（如果用户错过了保存对话框）
-function saveReportAgain(filename, base64Content) {
+function saveReportAgain() {
+    if (!lastGeneratedReport || !lastGeneratedReport.content) {
+        showMessage('没有可重新保存的报告，请重新生成', 'warning');
+        return;
+    }
+
     try {
-        const binaryString = atob(base64Content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        const blob = new Blob([bytes], { type: getReportMimeType(filename) });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        
-        document.body.appendChild(a);
-        a.click();
-        
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        
+        downloadBase64AsFile(lastGeneratedReport.content, lastGeneratedReport.filename);
         showMessage('重新保存成功!', 'success');
     } catch (error) {
         alert('重新保存失败: ' + error.message);
@@ -423,11 +416,11 @@ async function handleConsistencyExcelUpload(file) {
 
         if (data.success) {
             consistencyExcelFile = data;
-            infoEl.innerHTML = `✅ ${data.filename} - 上传成功`;
+            infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
             showMessage('Excel 文件上传成功!', 'success');
             await loadConsistencyParameters(data.file_id);
         } else {
-            infoEl.innerHTML = `❌ ${data.error || '上传失败'}`;
+            infoEl.innerHTML = `❌ ${escapeHtml(data.error || '上传失败')}`;
             showMessage(data.error || '上传失败', 'error');
         }
     } catch (error) {
@@ -645,7 +638,7 @@ async function exportConsistencyWord() {
         const data = await response.json();
 
         if (data.success) {
-            downloadDocxFromData(data);
+            downloadBase64AsFile(data.report_content, data.output_filename);
             const stats = data.statistics || {};
             showMessage(
                 `对比完成: ${stats.parameter_count} 个参数, ${stats.inconsistent_count} 项不一致`,
@@ -661,22 +654,4 @@ async function exportConsistencyWord() {
         btn.textContent = originalText;
         updateConsistencyButtons();
     }
-}
-
-function downloadDocxFromData(data) {
-    const binaryString = atob(data.report_content);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    const blob = new Blob([bytes], { type: getReportMimeType(data.output_filename) });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = data.output_filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
 }
