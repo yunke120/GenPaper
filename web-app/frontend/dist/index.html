@@ -4,586 +4,226 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>单机数据包报告生成器</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 28px;
-            margin-bottom: 10px;
-        }
-        
-        .header .subtitle {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-        
-        .content {
-            padding: 30px;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-        }
-        
-        @media (max-width: 768px) {
-            .content {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        .card {
-            border: 1px solid #e4e7ed;
-            border-radius: 8px;
-            padding: 20px;
-            background: #f8f9fa;
-            min-height: 500px;
-        }
-        
-        .card h2 {
-            color: #333;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #409eff;
-        }
-        
-        .upload-section {
-            margin-bottom: 25px;
-        }
-        
-        .upload-section h3 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-        
-        .upload-area {
-            border: 2px dashed #dcdfe6;
-            border-radius: 6px;
-            padding: 30px 20px;
-            text-align: center;
-            cursor: pointer;
-            background: #fafafa;
-            transition: all 0.3s;
-        }
-        
-        .upload-area:hover {
-            border-color: #409eff;
-            background: #f0f9ff;
-        }
-        
-        .upload-icon {
-            font-size: 36px;
-            margin-bottom: 10px;
-        }
-        
-        .upload-text {
-            color: #606266;
-            margin-bottom: 5px;
-        }
-        
-        .upload-tip {
-            color: #909399;
-            font-size: 12px;
-        }
-        
-        .file-info {
-            margin-top: 10px;
-            padding: 10px;
-            background: #e1f3d8;
-            border-radius: 4px;
-            border-left: 4px solid #67c23a;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .batch-section {
-            margin-top: 20px;
-        }
-        
-        select {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #dcdfe6;
-            border-radius: 4px;
-            font-size: 14px;
-            color: #606266;
-        }
-        
-        button {
-            background: #409eff;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            width: 100%;
-            margin-top: 20px;
-            transition: background 0.3s;
-        }
-        
-        button:hover {
-            background: #66b1ff;
-        }
-        
-        button:disabled {
-            background: #c0c4cc;
-            cursor: not-allowed;
-        }
-        
-        .hint {
-            margin-top: 15px;
-            padding: 10px;
-            background: #f0f9ff;
-            border-radius: 4px;
-            color: #409eff;
-            font-size: 14px;
-            text-align: center;
-        }
-        
-        .result-area {
-            min-height: 400px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .empty-state {
-            text-align: center;
-            color: #909399;
-        }
-        
-        .empty-icon {
-            font-size: 48px;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
-        
-        .result-success {
-            text-align: center;
-            padding: 20px;
-        }
-        
-        .success-icon {
-            font-size: 48px;
-            color: #67c23a;
-            margin-bottom: 15px;
-        }
-        
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-            margin: 20px 0;
-        }
-        
-        .stat-item {
-            text-align: center;
-            padding: 10px;
-            background: #f5f7fa;
-            border-radius: 4px;
-        }
-        
-        .stat-value {
-            font-size: 20px;
-            font-weight: bold;
-            color: #409eff;
-        }
-        
-        .stat-label {
-            font-size: 12px;
-            color: #909399;
-        }
-        
-        .download-btn {
-            background: #67c23a;
-            margin-top: 10px;
-        }
-        
-        .download-btn:hover {
-            background: #85ce61;
-        }
-        
-        .footer {
-            text-align: center;
-            padding: 20px;
-            color: #909399;
-            font-size: 12px;
-            border-top: 1px solid #ebeef5;
-        }
-        
-        .status {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            margin-left: 5px;
-        }
-        
-        .status-ok {
-            background: #67c23a;
-            color: white;
-        }
-        
-        .status-error {
-            background: #f56c6c;
-            color: white;
-        }
-        
-        .status-checking {
-            background: #e6a23c;
-            color: white;
-        }
-        
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #409eff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .message {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 15px 20px;
-            border-radius: 4px;
-            color: white;
-            z-index: 1000;
-            animation: slideIn 0.3s ease;
-        }
-        
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-        
-        .message-success {
-            background: #67c23a;
-        }
-        
-        .message-error {
-            background: #f56c6c;
-        }
-        
-        .message-info {
-            background: #409eff;
-        }
-
-        .page-nav {
-            display: flex;
-            background: #fff;
-            border-bottom: 1px solid #e4e7ed;
-        }
-
-        .nav-btn {
-            flex: 1;
-            padding: 14px 20px;
-            border: none;
-            background: #fff;
-            cursor: pointer;
-            font-size: 15px;
-            color: #606266;
-            border-bottom: 3px solid transparent;
-        }
-
-        .nav-btn:hover {
-            color: #409eff;
-            background: #f0f9ff;
-        }
-
-        .nav-btn.active {
-            color: #409eff;
-            border-bottom-color: #409eff;
-            font-weight: bold;
-        }
-
-        .consistency-section {
-            margin-bottom: 24px;
-        }
-
-        .consistency-section h3 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 16px;
-        }
-
-        .checkbox-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 14px;
-        }
-
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
-        }
-
-        .consistency-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-
-        .consistency-actions button {
-            margin-top: 0;
-            width: auto;
-            padding: 10px 16px;
-        }
-
-        .consistency-toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 12px;
-        }
-
-        .consistency-toolbar input[type="text"] {
-            flex: 1;
-            min-width: 200px;
-            padding: 8px 10px;
-            border: 1px solid #dcdfe6;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-
-        .consistency-toolbar button {
-            margin-top: 0;
-            width: auto;
-            padding: 8px 14px;
-        }
-
-        .data-table-wrap {
-            overflow-x: auto;
-            max-height: 420px;
-            overflow-y: auto;
-            background: #fff;
-        }
-
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .data-table th,
-        .data-table td {
-            border: 1px solid #dcdfe6;
-            padding: 8px;
-            text-align: left;
-            font-size: 13px;
-            vertical-align: top;
-            word-break: break-word;
-        }
-
-        .data-table th {
-            background: #f5f7fa;
-            white-space: nowrap;
-        }
-
-        .consistency-tip {
-            margin-top: 10px;
-            color: #909399;
-            font-size: 13px;
-        }
-
-        .consistency-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            color: #fff;
-        }
-
-        .consistency-badge.ok {
-            background: #67c23a;
-        }
-
-        .consistency-badge.diff {
-            background: #f56c6c;
-        }
-    </style>
+    <link rel="stylesheet" href="app.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>单机数据包报告生成器</h1>
-            <div class="subtitle">基于 Excel 数据和 Word 模板的自动化报告生成工具</div>
-        </div>
+    <div class="app-shell">
+        <!-- 左侧导航：各型号 + 工具页 -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-title">单机数据包<br>报告生成器</div>
+            </div>
 
-        <div class="page-nav">
-            <button class="nav-btn active" id="navHomeBtn" onclick="switchPage('home')">
-                📄 报告生成
-            </button>
-            <button class="nav-btn" id="navConsistencyBtn" onclick="switchPage('consistency')">
-                🔍 数据一致性对比
-            </button>
-        </div>
-        
-        <div id="homePage">
-            <div class="content">
-                <!-- 左侧：文件上传区域 -->
-                <div class="card">
-                    <h2>📤 文件上传</h2>
-                
-                    <!-- Excel 文件上传 -->
-                    <div class="upload-section">
-                        <h3>1. 上传 Excel 数据文件</h3>
-                        <div class="upload-area" id="excelUploadArea">
-                            <div class="upload-icon">📊</div>
-                            <div class="upload-text">拖拽 Excel 文件到此处或 <em>点击上传</em></div>
-                            <div class="upload-tip">支持 .xlsx 和 .xls 格式，文件大小不超过 50MB</div>
-                        </div>
-                        <input type="file" id="excelFile" accept=".xlsx,.xls" style="display: none;">
-                        <div id="excelFileInfo" class="file-info" style="display: none;"></div>
+            <div class="sidebar-actions">
+                <button class="btn btn-primary btn-block" onclick="DatabasePage.openCreateModal()">＋ 新建型号</button>
+                <button class="btn btn-block" onclick="DatabasePage.refresh()">⟳ 刷新数据</button>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="sidebar-label">型号</div>
+                <div id="sidebarModelList">
+                    <div class="sidebar-empty">加载中...</div>
+                </div>
+                <div class="sidebar-label">工具</div>
+                <button class="side-item" id="navConsistencyItem" onclick="DatabasePage.selectConsistency()">
+                    🔍 数据一致性对比
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div>版本 1.1.0</div>
+                <div>后端状态: <span id="backendStatus" class="status status-checking">检查中...</span></div>
+            </div>
+        </aside>
+
+        <!-- 主体区域 -->
+        <main class="main-area">
+            <!-- 未选择型号 -->
+            <div id="emptyView" class="empty-view">
+                <div class="empty-icon">🗂️</div>
+                <p>从左侧选择一个型号查看数据库内容</p>
+                <p class="empty-sub">或点击「＋ 新建型号」创建第一个型号</p>
+            </div>
+
+            <!-- 型号详情 -->
+            <div id="modelView" style="display: none;">
+                <div class="main-header">
+                    <h2 id="modelTitle"></h2>
+                    <div class="main-actions">
+                        <button class="btn" onclick="DatabasePage.openUploadDataModal()">⬆ 上传新数据包</button>
+                        <button class="btn" onclick="DatabasePage.openUploadTemplatesModal()">📝 上传模板</button>
+                        <button class="btn" onclick="DatabasePage.refreshDetail()">⟳ 刷新</button>
                     </div>
-                
-                    <!-- Word 模板上传 -->
-                    <div class="upload-section">
-                        <h3>2. 上传 Word/Excel 模板文件</h3>
-                        <div class="upload-area" id="templateUploadArea">
-                            <div class="upload-icon">📝</div>
-                            <div class="upload-text">拖拽 Word/Excel 模板到此处或 <em>点击上传</em></div>
-                            <div class="upload-tip">支持 .docx 和 .xlsx 格式，文件大小不超过 50MB</div>
-                        </div>
-                        <input type="file" id="templateFile" accept=".docx,.xlsx" style="display: none;">
-                        <div id="templateFileInfo" class="file-info" style="display: none;"></div>
+                </div>
+
+                <div class="alert" id="dbParseError" style="display: none;"></div>
+
+                <div class="panel-row">
+                    <div class="panel glass">
+                        <h3>📦 数据包</h3>
+                        <div id="dbDataFileInfo"></div>
                     </div>
-                
-                    <!-- 批次选择 -->
-                    <div class="upload-section batch-section" id="batchSection" style="display: none;">
-                        <h3>3. 选择批次号</h3>
-                        <select id="batchSelect">
-                            <option value="">请选择批次号</option>
+                    <div class="panel glass panel-generate">
+                        <h3>🪄 报告生成</h3>
+                        <label class="field-label" for="dbBatchSelect">选择批次号</label>
+                        <select id="dbBatchSelect" onchange="DatabasePage.selectBatch(this.value)">
+                            <option value="">请先选择批次号</option>
                         </select>
-                        <div id="batchInfo" style="margin-top: 10px;"></div>
-                    </div>
-                
-                    <!-- 生成按钮 -->
-                    <div class="action-section">
-                        <button id="generateBtn" onclick="generateReport()" disabled>
-                            🪄 生成报告
+                        <button class="btn btn-primary btn-block" id="dbGenerateAllBtn"
+                                onclick="DatabasePage.generateAll()" disabled>
+                            📦 一键生成所有报告
                         </button>
-                        <div id="generateHint" class="hint" style="display: none;">
-                            ℹ️ 请先上传 Excel 数据文件和 Word 模板文件，并选择批次号
-                        </div>
-                    </div>
-                </div>
-            
-                <!-- 右侧：结果展示区域 -->
-                <div class="card">
-                    <h2>📊 生成结果</h2>
-                    <div class="result-area" id="resultArea">
-                        <div class="empty-state">
-                            <div class="empty-icon">📋</div>
-                            <p>暂无数据</p>
-                            <p style="margin-top: 10px; font-size: 14px;">
-                                上传 Excel 文件后可以预览数据，生成报告后会显示结果
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div id="consistencyPage" style="display: none;">
-            <div class="content">
-                <div class="card">
-                    <h2>📊 数据与配置</h2>
-
-                    <div class="consistency-section">
-                        <h3>1. 上传 Excel 数据文件</h3>
-                        <div class="upload-area" id="consistencyExcelUploadArea">
-                            <div class="upload-icon">📊</div>
-                            <div class="upload-text">拖拽 Excel 文件到此处或 <em>点击上传</em></div>
-                            <div class="upload-tip">支持 .xlsx 和 .xls 格式，文件大小不超过 50MB</div>
-                        </div>
-                        <input type="file" id="consistencyExcelFile" accept=".xlsx,.xls" style="display: none;">
-                        <div id="consistencyExcelFileInfo" class="file-info" style="display: none;"></div>
-                    </div>
-
-                    <div class="consistency-section" id="consistencyBatchSection" style="display: none;">
-                        <h3>2. 勾选对比批次</h3>
-                        <div class="checkbox-list" id="consistencyBatchList"></div>
-                    </div>
-
-                    <div class="consistency-section" id="consistencyActionSection" style="display: none;">
-                        <h3>3. 配置操作</h3>
-                        <div class="consistency-actions">
-                            <button id="consistencyExportConfigBtn" onclick="exportConsistencyConfig()">📥 导出配置</button>
-                            <button onclick="document.getElementById('consistencyImportFile').click()">📤 导入配置</button>
-                            <button id="consistencyExportWordBtn" class="download-btn" onclick="exportConsistencyWord()">📄 导出Word对比</button>
-                        </div>
-                        <input type="file" id="consistencyImportFile" accept=".json" style="display: none;">
+                        <div class="generate-hint" id="dbGenerateHint">选择批次号后可导出报告</div>
                     </div>
                 </div>
 
-                <div class="card">
-                    <h2>🔍 参数选择</h2>
-
-                    <div class="consistency-toolbar" id="consistencyParamToolbar" style="display: none;">
-                        <button onclick="toggleAllConsistencyParams(true)">全选</button>
-                        <button onclick="toggleAllConsistencyParams(false)">清空</button>
+                <div class="panel glass">
+                    <div class="panel-head">
+                        <h3>🧾 模板文件列表</h3>
+                        <button class="btn btn-mini" onclick="DatabasePage.openTplConfigModal()">🏷️ 报告类型</button>
                     </div>
+                    <div class="template-list" id="dbTemplateList"></div>
+                </div>
 
-                    <div class="data-table-wrap" id="consistencyParamTableWrap">
-                        <div class="empty-state">
-                            <div class="empty-icon">📋</div>
-                            <p>请先上传 Excel 数据文件</p>
+                <div class="panel glass">
+                    <div class="panel-head">
+                        <h3>📋 数据库内容预览</h3>
+                        <div class="panel-tools">
+                            <span class="dirty-count" id="dbDirtyCount"></span>
+                            <button class="btn btn-mini" id="dbDiscardBtn" onclick="DatabasePage.discardEdits()" disabled>放弃修改</button>
+                            <button class="btn btn-mini btn-primary" id="dbSaveEditsBtn" onclick="DatabasePage.saveEdits()" disabled>💾 保存修改</button>
                         </div>
                     </div>
-                    <div class="consistency-tip" id="consistencySelectedCount"></div>
+                    <div class="table-toolbar">
+                        <input type="text" id="dbPreviewSearch" class="search-input"
+                               placeholder="搜索参数 ID 或描述..." oninput="DatabasePage.filterPreview()">
+                    </div>
+                    <div class="batch-check-row" id="dbBatchChecks"></div>
+                    <div class="table-wrap" id="dbPreviewWrap">
+                        <div class="empty-state"><div class="empty-icon">📭</div><p>该型号还没有数据包</p></div>
+                    </div>
+                    <div class="hint-text">勾选批次列控制预览范围；单元格可直接点击编辑（支持多行），保存后写入数据包并自动快照到版本历史。</div>
+                </div>
+
+                <div class="panel glass">
+                    <h3>🕘 版本管理</h3>
+                    <div class="version-list" id="dbVersionList"></div>
                 </div>
             </div>
-        </div>
-        
-        <div class="footer">
-            <p>© 2023 单机数据包报告生成器 | 访问地址: <code>http://127.0.0.1:5000</code></p>
-            <p>版本: 1.0.0 | 后端状态: <span id="backendStatus" class="status status-checking">检查中...</span></p>
+
+            <!-- 数据一致性对比 -->
+            <div id="consistencyView" style="display: none;">
+                <div class="main-header">
+                    <h2>🔍 数据一致性对比</h2>
+                </div>
+
+                <div class="panel-row">
+                    <div class="panel glass">
+                        <h3>1️⃣ 选择型号</h3>
+                        <select id="consistencyModelSelect">
+                            <option value="">请选择型号</option>
+                        </select>
+                        <div class="hint-text">型号列表来自左侧导航，可在「＋ 新建型号」中添加</div>
+                    </div>
+                    <div class="panel glass">
+                        <h3>2️⃣ 配置操作</h3>
+                        <div class="btn-row" id="consistencyActionSection" style="display: none;">
+                            <button class="btn" onclick="exportConsistencyConfig()">📥 导出配置</button>
+                            <button class="btn" onclick="document.getElementById('consistencyImportFile').click()">📤 导入配置</button>
+                            <button class="btn btn-primary" id="consistencyExportWordBtn" onclick="exportConsistencyWord()">📄 导出Word对比</button>
+                            <input type="file" id="consistencyImportFile" accept=".json" style="display: none;">
+                        </div>
+                        <div class="hint-text" id="consistencyActionHint">选择型号后可导出配置与对比报告</div>
+                    </div>
+                </div>
+
+                <div class="panel glass" id="consistencyBatchSection" style="display: none;">
+                    <h3>3️⃣ 勾选对比批次</h3>
+                    <div class="checkbox-list" id="consistencyBatchList"></div>
+                </div>
+
+                <div class="panel glass">
+                    <h3>4️⃣ 参数选择</h3>
+                    <div class="table-toolbar" id="consistencyParamToolbar" style="display: none;">
+                        <button class="btn btn-mini" onclick="toggleAllConsistencyParams(true)">全选</button>
+                        <button class="btn btn-mini" onclick="toggleAllConsistencyParams(false)">清空</button>
+                    </div>
+                    <div class="table-wrap" id="consistencyParamTableWrap">
+                        <div class="empty-state"><div class="empty-icon">📋</div><p>请先选择型号</p></div>
+                    </div>
+                    <div class="hint-text" id="consistencySelectedCount"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 新建型号弹窗 -->
+    <div class="modal-mask" id="dbCreateModal" style="display: none;">
+        <div class="modal glass">
+            <h3>＋ 新建型号</h3>
+            <label class="field">型号名称
+                <input type="text" id="dbNewModelName" placeholder="例如：ZLQ-Ⅱ">
+            </label>
+            <label class="field">初始数据包（可选，.xlsx）
+                <input type="file" id="dbNewModelFile" accept=".xlsx">
+            </label>
+            <div class="modal-actions">
+                <button class="btn" onclick="DatabasePage.closeModal('dbCreateModal')">取消</button>
+                <button class="btn btn-primary" id="dbCreateConfirmBtn" onclick="DatabasePage.submitCreate()">创建</button>
+            </div>
         </div>
     </div>
-    
+
+    <!-- 上传数据包弹窗 -->
+    <div class="modal-mask" id="dbUploadDataModal" style="display: none;">
+        <div class="modal glass">
+            <h3>⬆ 上传新数据包</h3>
+            <p class="modal-tip">当前数据包会自动快照到版本历史，可随时恢复。</p>
+            <label class="field">数据包文件（.xlsx）
+                <input type="file" id="dbUploadDataFile" accept=".xlsx">
+            </label>
+            <label class="field">版本说明（可选）
+                <input type="text" id="dbUploadDataNote" placeholder="例如：更新了 XX 项测试数据">
+            </label>
+            <div class="modal-actions">
+                <button class="btn" onclick="DatabasePage.closeModal('dbUploadDataModal')">取消</button>
+                <button class="btn btn-primary" id="dbUploadDataConfirmBtn" onclick="DatabasePage.submitUploadData()">上传</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传模板弹窗 -->
+    <div class="modal-mask" id="dbUploadTemplatesModal" style="display: none;">
+        <div class="modal glass">
+            <h3>📝 上传模板</h3>
+            <p class="modal-tip">支持 .docx / .xlsx，可多选，同名模板将被覆盖。</p>
+            <label class="field">模板文件
+                <input type="file" id="dbUploadTemplateFiles" accept=".docx,.xlsx" multiple>
+            </label>
+            <div class="modal-actions">
+                <button class="btn" onclick="DatabasePage.closeModal('dbUploadTemplatesModal')">取消</button>
+                <button class="btn btn-primary" id="dbUploadTemplatesConfirmBtn" onclick="DatabasePage.submitUploadTemplates()">上传</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模板报告类型编辑弹窗 -->
+    <div class="modal-mask" id="dbTplConfigModal" style="display: none;">
+        <div class="modal glass">
+            <h3>🏷️ 模板报告类型</h3>
+            <p class="modal-tip">
+                标注每个模板对应的报告名称（如 Doc_1 → 测试报告）。
+                保存到 templates/templates.json，也可直接手工编辑该文件；留空表示未设置。
+            </p>
+            <div id="dbTplConfigRows" class="tpl-config-rows"></div>
+            <div class="modal-actions">
+                <button class="btn" onclick="DatabasePage.closeModal('dbTplConfigModal')">取消</button>
+                <button class="btn btn-primary" id="dbTplConfigSaveBtn" onclick="DatabasePage.saveTplConfig()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
+    <script src="db.js"></script>
 </body>
 </html>

@@ -433,6 +433,109 @@ def generate_excel_report(template_file, batch, param_data, doc_data, output_fil
         return False, 0, 0, str(e)
 
 
+def update_data_cells(excel_file, edits, output_file):
+    """
+    将单元格编辑写回数据包的“数据”sheet（openpyxl 直接定位单元格，保留原结构与样式）。
+
+    行列约定与 parse_excel_data 一致：第 1 行为批次表头（从 D 列起），
+    B 列为参数 ID（第 2 行为表头行），参数值从第 3 行起。
+
+    Args:
+        excel_file: 数据包路径或文件对象
+        edits: 编辑列表 [{'param_id': str, 'field': 'value'|'description',
+                          'batch': str（value 编辑必填）, 'value': str}]
+        output_file: 写回结果保存目标（路径或流）
+
+    Returns:
+        tuple: (updated_count, missing_list, error)
+    """
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(excel_file, data_only=False)
+
+        # 与 parse_excel_data 一致的 sheet 匹配规则（精确优先，其次包含）
+        def _find_sheet(keyword):
+            for name in wb.sheetnames:
+                if name.strip() == keyword:
+                    return name
+            for name in wb.sheetnames:
+                if keyword in name:
+                    return name
+            return None
+
+        data_sheet = _find_sheet('数据')
+        if not data_sheet:
+            return 0, [], "未找到'数据'sheet"
+        ws = wb[data_sheet]
+
+        # 批次列映射（openpyxl 第 1 行，从第 4 列/D 列起）
+        batch_cols = {}
+        for col in range(4, (ws.max_column or 4) + 1):
+            v = ws.cell(row=1, column=col).value
+            if v is not None and str(v).strip():
+                batch_cols.setdefault(str(v).strip(), col)
+
+        # 参数行映射（B 列，第 2 行为 'ID' 表头，参数从第 3 行起）
+        param_rows = {}
+        for row in range(2, (ws.max_row or 2) + 1):
+            v = ws.cell(row=row, column=2).value
+            if v is not None and str(v).strip() and str(v).strip() != 'ID':
+                param_rows.setdefault(str(v).strip(), row)
+
+        updated, missing = 0, []
+        for edit in edits:
+            pid = str(edit.get('param_id', '')).strip()
+            field = str(edit.get('field', '')).strip()
+            if not pid or pid not in param_rows:
+                missing.append(f"{pid or '?'}({field or '?'})")
+                continue
+            row = param_rows[pid]
+
+            if field == 'description':
+                cell = ws.cell(row=row, column=3)
+            elif field == 'value':
+                batch = str(edit.get('batch', '')).strip()
+                col = batch_cols.get(batch)
+                if col is None:
+                    missing.append(f"{pid}@{batch}")
+                    continue
+                cell = ws.cell(row=row, column=col)
+            else:
+                missing.append(f"{pid}({field})")
+                continue
+
+            new_value = edit.get('value', '')
+            new_value = '' if new_value is None else str(new_value)
+
+            # 原单元格是数字时尽量按数字写回，保持类型一致
+            orig = cell.value
+            if isinstance(orig, bool):
+                pass
+            elif isinstance(orig, int):
+                try:
+                    new_value = int(new_value.strip())
+                except ValueError:
+                    pass
+            elif isinstance(orig, float):
+                try:
+                    new_value = float(new_value.strip())
+                except ValueError:
+                    pass
+            cell.value = new_value
+            updated += 1
+
+        wb.save(output_file)
+        if hasattr(output_file, 'seek'):
+            output_file.seek(0)
+
+        logger.info("数据包单元格写回: %d 处更新, %d 处未定位", updated, len(missing))
+        return updated, missing, None
+    except Exception as e:
+        logger.exception("数据包单元格写回失败")
+        return 0, [], str(e)
+
+
 def generate_consistency_report(param_data, batch_numbers, parameter_ids, output_file):
     """
     生成数据一致性对比 Word 报告。

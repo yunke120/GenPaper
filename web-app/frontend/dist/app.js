@@ -1,86 +1,15 @@
-// 单机数据包报告生成器前端（内存版）
-console.log("单机数据包报告生成器前端加载（内存版）");
-
-// 全局状态
-let currentExcelFile = null;
-let currentTemplateFile = null;
-let currentBatch = '';
-let currentBatches = [];
-// 最近一次生成的报告（用于"重新保存"，避免把 base64 内容拼进 DOM 属性）
-let lastGeneratedReport = null;
+// 单机数据包报告生成器前端
+// 页面：型号数据库（database，主页面，逻辑在 db.js）+ 数据一致性对比（consistency）
+console.log("单机数据包报告生成器前端加载");
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
-    initUpload();
     initConsistency();
     checkStatus();
-    
+
     // 每30秒检查一次状态
     setInterval(checkStatus, 30000);
 });
-
-// 初始化上传功能
-function initUpload() {
-    // Excel 文件上传
-    const excelUploadArea = document.getElementById('excelUploadArea');
-    const excelFile = document.getElementById('excelFile');
-    
-    excelUploadArea.addEventListener('click', () => excelFile.click());
-    setupDragDrop(excelUploadArea, excelFile, 'excel');
-    
-    excelFile.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleFileUpload(e.target.files[0], 'excel');
-        }
-    });
-    
-    // Word 文件上传
-    const templateUploadArea = document.getElementById('templateUploadArea');
-    const templateFile = document.getElementById('templateFile');
-    
-    templateUploadArea.addEventListener('click', () => templateFile.click());
-    setupDragDrop(templateUploadArea, templateFile, 'template');
-    
-    templateFile.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleFileUpload(e.target.files[0], 'template');
-        }
-    });
-    
-    // 批次选择
-    document.getElementById('batchSelect').addEventListener('change', function(e) {
-        currentBatch = e.target.value;
-        updateGenerateButton();
-    });
-}
-
-// 设置拖拽上传
-function setupDragDrop(uploadArea, fileInput, type, dropHandler) {
-    uploadArea.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        uploadArea.style.borderColor = '#409eff';
-        uploadArea.style.background = '#f0f9ff';
-    });
-    
-    uploadArea.addEventListener('dragleave', function() {
-        uploadArea.style.borderColor = '#dcdfe6';
-        uploadArea.style.background = '#fafafa';
-    });
-    
-    uploadArea.addEventListener('drop', function(e) {
-        e.preventDefault();
-        uploadArea.style.borderColor = '#dcdfe6';
-        uploadArea.style.background = '#fafafa';
-        
-        if (e.dataTransfer.files.length > 0) {
-            if (dropHandler) {
-                dropHandler(e.dataTransfer.files[0]);
-            } else {
-                handleFileUpload(e.dataTransfer.files[0], type);
-            }
-        }
-    });
-}
 
 // 根据文件名返回报告的 MIME 类型
 function getReportMimeType(filename) {
@@ -110,212 +39,6 @@ function downloadBase64AsFile(base64Content, filename) {
 
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
-}
-
-// 处理文件上传
-async function handleFileUpload(file, type) {
-    // 检查文件大小
-    if (file.size > 50 * 1024 * 1024) {
-        alert('文件大小不能超过 50MB');
-        return;
-    }
-    
-    // 检查文件类型
-    if (type === 'excel') {
-        const isExcel = file.name.toLowerCase().endsWith('.xlsx') || 
-                       file.name.toLowerCase().endsWith('.xls');
-        if (!isExcel) {
-            alert('只能上传 Excel 文件 (.xlsx, .xls)');
-            return;
-        }
-    } else {
-        const name = file.name.toLowerCase();
-        const isDocx = name.endsWith('.docx');
-        const isExcel = name.endsWith('.xlsx');
-        if (!isDocx && !isExcel) {
-            alert('只能上传 Word (.docx) 或 Excel (.xlsx) 模板文件');
-            return;
-        }
-    }
-    
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const endpoint = type === 'excel' ? '/api/upload/excel' : '/api/upload/template';
-    const infoEl = document.getElementById(type + 'FileInfo');
-    
-    try {
-        // 显示上传状态
-        infoEl.innerHTML = '正在上传...';
-        infoEl.style.display = 'block';
-        
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            if (type === 'excel') {
-                currentExcelFile = data;
-                infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
-
-                // 更新批次选择
-                if (data.data && data.data.batch_numbers) {
-                    updateBatchSelect(data.data.batch_numbers);
-                }
-            } else {
-                currentTemplateFile = data;
-                infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
-            }
-
-            updateGenerateButton();
-            showMessage('文件上传成功!', 'success');
-        } else {
-            infoEl.innerHTML = `❌ ${escapeHtml(data.error || '上传失败')}`;
-            showMessage(data.error || '上传失败', 'error');
-        }
-    } catch (error) {
-        infoEl.innerHTML = '❌ 上传失败';
-        showMessage('上传失败: ' + error.message, 'error');
-    }
-}
-
-// 更新批次选择
-function updateBatchSelect(batches) {
-    currentBatches = batches;
-    const select = document.getElementById('batchSelect');
-    select.innerHTML = '<option value="">请选择批次号</option>';
-    
-    batches.forEach(batch => {
-        const option = document.createElement('option');
-        option.value = batch;
-        option.textContent = batch;
-        select.appendChild(option);
-    });
-    
-    document.getElementById('batchSection').style.display = 'block';
-    
-    // 自动选择第一个批次
-    if (batches.length > 0) {
-        select.value = batches[0];
-        currentBatch = batches[0];
-        updateGenerateButton();
-    }
-}
-
-// 更新生成按钮状态
-function updateGenerateButton() {
-    const canGenerate = currentExcelFile && currentTemplateFile && currentBatch;
-    const generateBtn = document.getElementById('generateBtn');
-    const generateHint = document.getElementById('generateHint');
-    
-    generateBtn.disabled = !canGenerate;
-    generateHint.style.display = canGenerate ? 'none' : 'block';
-}
-
-// 生成报告
-async function generateReport() {
-    if (!currentExcelFile || !currentTemplateFile || !currentBatch) {
-        alert('请先上传 Excel 数据文件和 Word 模板文件，并选择批次号');
-        return;
-    }
-    
-    const generateBtn = document.getElementById('generateBtn');
-    const originalText = generateBtn.innerHTML;
-    generateBtn.innerHTML = '生成中...';
-    generateBtn.disabled = true;
-    
-    try {
-        showMessage('正在生成报告...', 'info');
-        
-        const response = await fetch('/api/generate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                excel_file_id: currentExcelFile.file_id,
-                template_file_id: currentTemplateFile.file_id,
-                batch_number: currentBatch
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            // 从响应中获取报告内容并保存
-            lastGeneratedReport = {
-                filename: data.output_filename,
-                content: data.report_content
-            };
-            await saveReportFromResponse(data);
-            showResult(data);
-            showMessage('报告生成成功!', 'success');
-        } else {
-            showMessage(data.error || '生成失败', 'error');
-        }
-    } catch (error) {
-        showMessage('生成报告时出错: ' + error.message, 'error');
-    } finally {
-        generateBtn.innerHTML = originalText;
-        generateBtn.disabled = false;
-        updateGenerateButton();
-    }
-}
-
-// 从API响应保存报告
-async function saveReportFromResponse(data) {
-    if (!data.report_content) {
-        alert('报告内容为空');
-        return;
-    }
-
-    try {
-        downloadBase64AsFile(data.report_content, data.output_filename);
-    } catch (error) {
-        console.error('保存报告失败:', error);
-        alert('保存报告失败: ' + error.message);
-    }
-}
-
-// 显示结果
-function showResult(data) {
-    const resultArea = document.getElementById('resultArea');
-    const stats = data.statistics || {};
-    resultArea.innerHTML = `
-        <div style="text-align: center; padding: 20px;">
-            <div style="font-size: 48px; color: #67c23a; margin-bottom: 15px;">✅</div>
-            <h3 style="color: #67c23a; margin-bottom: 10px;">报告生成成功!</h3>
-            <p style="color: #606266; margin-bottom: 5px;">批次: ${escapeHtml(String(stats.batch_number || ''))}</p>
-            <p style="color: #606266; margin-bottom: 5px;">参数替换: ${escapeHtml(String(stats.parameter_replacements || 0))}</p>
-            <p style="color: #606266; margin-bottom: 5px;">文档替换: ${escapeHtml(String(stats.document_replacements || 0))}</p>
-            <p style="color: #606266; margin-bottom: 20px;">总替换数: ${escapeHtml(String(stats.total_replacements || 0))}</p>
-            <p style="color: #909399; font-size: 14px; margin-top: 10px;">
-                文件已弹出保存对话框，请选择保存位置
-            </p>
-            <button onclick="saveReportAgain()"
-                    style="background: #409eff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px;">
-                ⬇️ 重新保存报告
-            </button>
-        </div>
-    `;
-}
-
-// 重新保存报告（如果用户错过了保存对话框）
-function saveReportAgain() {
-    if (!lastGeneratedReport || !lastGeneratedReport.content) {
-        showMessage('没有可重新保存的报告，请重新生成', 'warning');
-        return;
-    }
-
-    try {
-        downloadBase64AsFile(lastGeneratedReport.content, lastGeneratedReport.filename);
-        showMessage('重新保存成功!', 'success');
-    } catch (error) {
-        alert('重新保存失败: ' + error.message);
-    }
 }
 
 // 检查后端状态
@@ -354,92 +77,62 @@ function showMessage(text, type = 'info') {
 }
 
 // ============ 数据一致性对比 ============
-let consistencyExcelFile = null;
+let consistencyModel = '';
 let consistencyBatches = [];
 let consistencyParams = [];
 let consistencySelectedBatches = new Set();
 let consistencySelectedParamIds = new Set();
 
-function switchPage(name) {
-    const homePage = document.getElementById('homePage');
-    const consistencyPage = document.getElementById('consistencyPage');
-    const homeBtn = document.getElementById('navHomeBtn');
-    const consistencyBtn = document.getElementById('navConsistencyBtn');
-    const showHome = name === 'home';
-    homePage.style.display = showHome ? '' : 'none';
-    consistencyPage.style.display = showHome ? 'none' : '';
-    homeBtn.classList.toggle('active', showHome);
-    consistencyBtn.classList.toggle('active', !showHome);
+function showView(name) {
+    // 视图切换：model（型号详情） / consistency（数据一致性对比） / empty（未选择）
+    document.getElementById('modelView').style.display = name === 'model' ? '' : 'none';
+    document.getElementById('consistencyView').style.display = name === 'consistency' ? '' : 'none';
+    document.getElementById('emptyView').style.display = name === 'empty' ? '' : 'none';
 }
 
 function initConsistency() {
-    const uploadArea = document.getElementById('consistencyExcelUploadArea');
-    const fileInput = document.getElementById('consistencyExcelFile');
-
-    uploadArea.addEventListener('click', () => fileInput.click());
-    setupDragDrop(uploadArea, fileInput, 'consistency-excel', handleConsistencyExcelUpload);
-
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleConsistencyExcelUpload(e.target.files[0]);
+    const select = document.getElementById('consistencyModelSelect');
+    select.addEventListener('change', () => {
+        consistencyModel = select.value;
+        if (consistencyModel) {
+            loadConsistencyParameters(consistencyModel);
+        } else {
+            resetConsistencyState();
         }
     });
 
     document.getElementById('consistencyImportFile').addEventListener('change', importConsistencyConfig);
 }
 
-async function handleConsistencyExcelUpload(file) {
-    if (file.size > 50 * 1024 * 1024) {
-        alert('文件大小不能超过 50MB');
-        return;
-    }
-
-    const name = file.name.toLowerCase();
-    if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
-        alert('只能上传 Excel 文件 (.xlsx, .xls)');
-        return;
-    }
-
-    const infoEl = document.getElementById('consistencyExcelFileInfo');
-    infoEl.innerHTML = '正在上传...';
-    infoEl.style.display = 'block';
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-        const response = await fetch('/api/upload/excel', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await response.json();
-
-        if (data.success) {
-            consistencyExcelFile = data;
-            infoEl.innerHTML = `✅ ${escapeHtml(data.filename)} - 上传成功`;
-            showMessage('Excel 文件上传成功!', 'success');
-            await loadConsistencyParameters(data.file_id);
-        } else {
-            infoEl.innerHTML = `❌ ${escapeHtml(data.error || '上传失败')}`;
-            showMessage(data.error || '上传失败', 'error');
-        }
-    } catch (error) {
-        infoEl.innerHTML = '❌ 上传失败';
-        showMessage('上传失败: ' + error.message, 'error');
-    }
+function resetConsistencyState() {
+    consistencyBatches = [];
+    consistencyParams = [];
+    consistencySelectedBatches = new Set();
+    consistencySelectedParamIds = new Set();
+    document.getElementById('consistencyBatchSection').style.display = 'none';
+    document.getElementById('consistencyActionSection').style.display = 'none';
+    document.getElementById('consistencyActionHint').style.display = 'block';
+    document.getElementById('consistencyParamToolbar').style.display = 'none';
+    document.getElementById('consistencyParamTableWrap').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">📋</div><p>请先选择型号</p></div>';
+    document.getElementById('consistencySelectedCount').textContent = '';
+    updateConsistencyButtons();
 }
 
-async function loadConsistencyParameters(fileId) {
+async function loadConsistencyParameters(model) {
+    const tableWrap = document.getElementById('consistencyParamTableWrap');
+    tableWrap.innerHTML = '<div class="empty-state"><p>加载参数中...</p></div>';
     try {
         const response = await fetch('/api/consistency/parameters', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ excel_file_id: fileId })
+            body: JSON.stringify({ model: model })
         });
         const data = await response.json();
 
         if (!data.success) {
             showMessage(data.error || '读取参数失败', 'error');
+            tableWrap.innerHTML = '<div class="empty-state"><p>读取参数失败</p></div>';
             return;
         }
 
@@ -449,7 +142,8 @@ async function loadConsistencyParameters(fileId) {
         consistencySelectedParamIds = new Set();
 
         document.getElementById('consistencyBatchSection').style.display = 'block';
-        document.getElementById('consistencyActionSection').style.display = 'block';
+        document.getElementById('consistencyActionSection').style.display = 'flex';
+        document.getElementById('consistencyActionHint').style.display = 'none';
         document.getElementById('consistencyParamToolbar').style.display = 'flex';
 
         renderConsistencyBatches();
@@ -457,6 +151,7 @@ async function loadConsistencyParameters(fileId) {
         updateConsistencyButtons();
     } catch (error) {
         showMessage('读取参数时出错: ' + error.message, 'error');
+        tableWrap.innerHTML = '<div class="empty-state"><p>读取参数失败</p></div>';
     }
 }
 
@@ -611,8 +306,8 @@ function importConsistencyConfig(event) {
 }
 
 async function exportConsistencyWord() {
-    if (!consistencyExcelFile) {
-        showMessage('请先上传 Excel 数据文件', 'warning');
+    if (!consistencyModel) {
+        showMessage('请先选择型号', 'warning');
         return;
     }
     if (consistencySelectedBatches.size === 0 || consistencySelectedParamIds.size === 0) {
@@ -630,7 +325,7 @@ async function exportConsistencyWord() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                excel_file_id: consistencyExcelFile.file_id,
+                model: consistencyModel,
                 batch_numbers: [...consistencySelectedBatches],
                 parameter_ids: [...consistencySelectedParamIds]
             })

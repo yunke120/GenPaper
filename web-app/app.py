@@ -7,13 +7,16 @@
 import os
 import re
 import sys
+import json
 import hashlib
 import base64
 import io
+import shutil
 import logging
+import zipfile
 from datetime import datetime, timedelta
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 
 # 添加当前目录到系统路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -303,20 +306,43 @@ def generate():
         return jsonify({'error': '生成报告时出错，请查看服务端日志'}), 500
 
 
+def _resolve_consistency_source(data):
+    """一致性对比数据源：优先 model（型号数据库当前数据包），兼容 excel_file_id（内存缓存）。
+    返回 (parsed, error_response)。"""
+    model = data.get('model')
+    if model:
+        try:
+            parsed = _get_parsed_data(model)
+        except ValueError as e:
+            return None, (jsonify({'error': str(e)}), 400)
+        if not parsed:
+            return None, (jsonify({'error': f'型号 "{model}" 尚无数据包，请先上传'}), 400)
+        return parsed, None
+
+    excel_file_id = data.get('excel_file_id')
+    if not excel_file_id:
+        return None, (jsonify({'error': '缺少 model 或 excel_file_id'}), 400)
+    excel_file = get_from_cache(excel_file_id)
+    if not excel_file:
+        return None, (jsonify({'error': 'Excel 文件不存在或已过期（超过30分钟未使用）'}), 404)
+    try:
+        parsed = report_generator.parse_excel_data(io.BytesIO(excel_file['content']))
+    except ValueError as e:
+        return None, (jsonify({'error': str(e)}), 400)
+    return parsed, None
+
+
 @app.route('/api/consistency/parameters', methods=['POST'])
 def consistency_parameters():
-    """读取 Excel 数据中的所有批次与参数（含描述），用于数据一致性对比"""
+    """读取数据中的所有批次与参数（含描述），用于数据一致性对比"""
     data = request.json
-    if not data or 'excel_file_id' not in data:
-        return jsonify({'error': '缺少 Excel 文件 ID'}), 400
-
-    excel_file = get_from_cache(data['excel_file_id'])
-    if not excel_file:
-        return jsonify({'error': 'Excel 文件不存在或已过期（超过30分钟未使用）'}), 404
+    if not data:
+        return jsonify({'error': '请求数据为空'}), 400
 
     try:
-        excel_stream = io.BytesIO(excel_file['content'])
-        excel_data = report_generator.parse_excel_data(excel_stream)
+        parsed, error = _resolve_consistency_source(data)
+        if error:
+            return error
 
         parameters = [
             {
@@ -324,16 +350,14 @@ def consistency_parameters():
                 'description': param['description'],
                 'values': param['data']
             }
-            for param in excel_data['parameters']
+            for param in parsed['parameters']
         ]
 
         return jsonify({
             'success': True,
-            'batch_numbers': excel_data['batch_numbers'],
+            'batch_numbers': parsed['batch_numbers'],
             'parameters': parameters
         })
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
     except Exception:
         logger.exception("读取参数失败")
         return jsonify({'error': '读取参数失败，请查看服务端日志'}), 500
@@ -346,32 +370,26 @@ def consistency_compare():
     if not data:
         return jsonify({'error': '请求数据为空'}), 400
 
-    excel_file_id = data.get('excel_file_id')
     batch_numbers = data.get('batch_numbers') or []
     parameter_ids = data.get('parameter_ids') or []
 
-    if not excel_file_id:
-        return jsonify({'error': '缺少 Excel 文件 ID'}), 400
     if not batch_numbers:
         return jsonify({'error': '请至少选择一个批次'}), 400
     if not parameter_ids:
         return jsonify({'error': '请至少选择一个参数'}), 400
 
-    excel_file = get_from_cache(excel_file_id)
-    if not excel_file:
-        return jsonify({'error': 'Excel 文件不存在或已过期（超过30分钟未使用）'}), 404
-
     try:
-        excel_stream = io.BytesIO(excel_file['content'])
-        excel_data = report_generator.parse_excel_data(excel_stream)
+        parsed, error = _resolve_consistency_source(data)
+        if error:
+            return error
 
-        invalid_batches = [b for b in batch_numbers if b not in excel_data['batch_numbers']]
+        invalid_batches = [b for b in batch_numbers if b not in parsed['batch_numbers']]
         if invalid_batches:
             return jsonify({'error': f'批次号不存在: {", ".join(invalid_batches)}'}), 400
 
         output_stream = io.BytesIO()
         success, param_count, inconsistent_count, error_msg = report_generator.generate_consistency_report(
-            excel_data['parameters'],
+            parsed['parameters'],
             batch_numbers,
             parameter_ids,
             output_stream
@@ -457,6 +475,699 @@ def preview_data():
     except Exception:
         logger.exception("预览数据时出错")
         return jsonify({'error': '预览数据时出错，请查看服务端日志'}), 500
+
+
+# ======================================================================
+# 型号数据库（数据包/<型号>/）：多型号浏览、模板管理、版本管理、按批次生成
+# ======================================================================
+
+# 数据包版本快照文件名前缀
+VERSION_FILE_PREFIX = '数据包_'
+# 解析结果缓存：{model: (mtime, parsed)}，数据包文件按 mtime 失效
+_parse_cache = {}
+PARSE_CACHE_SIZE = 8
+
+
+def get_data_root():
+    """型号数据库根目录（数据包/<型号>/），可用环境变量 GENPAPER_DATA_ROOT 覆盖"""
+    env = os.environ.get('GENPAPER_DATA_ROOT')
+    if env:
+        return os.path.abspath(env)
+    if getattr(sys, 'frozen', False):
+        return os.path.join(os.path.dirname(sys.executable), '数据包')
+    base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(base, '..', '数据包'))
+
+
+def _validate_model_name(model):
+    """校验型号名称：可用作目录名，拒绝路径穿越与 Windows 保留名"""
+    model = (model or '').strip()
+    if not model or model in {'.', '..'}:
+        raise ValueError('型号名称不能为空')
+    if len(model) > 80 or re.search(r"[\\/:*?\"<>|'\x00-\x1f]", model):
+        raise ValueError(f'型号名称不合法: "{model}"')
+    if model.split('.')[0].upper() in _WINDOWS_RESERVED_NAMES:
+        raise ValueError(f'型号名称不能为 Windows 保留名: {model}')
+    return model
+
+
+def _model_root(model, must_exist=True):
+    model = _validate_model_name(model)
+    root = os.path.join(get_data_root(), model)
+    if must_exist and not os.path.isdir(root):
+        raise ValueError(f'型号 "{model}" 不存在')
+    return root
+
+
+def _model_templates_dir(model):
+    return os.path.join(_model_root(model), 'templates')
+
+
+def _model_versions_dir(model):
+    return os.path.join(_model_root(model), 'versions')
+
+
+def _current_data_file(model):
+    """型号根下唯一的 .xlsx 数据包；无数据返回 None，多个时报错"""
+    root = _model_root(model)
+    files = [f for f in os.listdir(root)
+             if f.lower().endswith('.xlsx') and os.path.isfile(os.path.join(root, f))]
+    if not files:
+        return None
+    if len(files) > 1:
+        raise ValueError(f'型号 "{model}" 根目录下存在多个 .xlsx 文件，请仅保留一个: {", ".join(files)}')
+    return os.path.join(root, files[0])
+
+
+def _file_info(path):
+    return {
+        'name': os.path.basename(path),
+        'size': os.path.getsize(path),
+        'mtime': datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
+def _get_parsed_data(model):
+    """解析并缓存型号当前数据包（按文件 mtime 失效）"""
+    path = _current_data_file(model)
+    if not path:
+        return None
+    mtime = os.path.getmtime(path)
+    cached = _parse_cache.get(model)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    with open(path, 'rb') as f:
+        parsed = report_generator.parse_excel_data(io.BytesIO(f.read()))
+    if len(_parse_cache) >= PARSE_CACHE_SIZE and model not in _parse_cache:
+        _parse_cache.pop(next(iter(_parse_cache)))
+    _parse_cache[model] = (mtime, parsed)
+    return parsed
+
+
+def _read_versions_meta(model):
+    meta_path = os.path.join(_model_versions_dir(model), 'meta.json')
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (ValueError, OSError):
+            pass
+    return {}
+
+
+def _write_versions_meta(model, meta):
+    os.makedirs(_model_versions_dir(model), exist_ok=True)
+    meta_path = os.path.join(_model_versions_dir(model), 'meta.json')
+    with open(meta_path, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def _snapshot_current(model, source, note=''):
+    """将当前数据包快照进 versions/，返回版本 ID；无当前数据包时返回 None"""
+    src = _current_data_file(model)
+    if not src:
+        return None
+    versions_dir = _model_versions_dir(model)
+    os.makedirs(versions_dir, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    vid, seq = stamp, 1
+    while os.path.exists(os.path.join(versions_dir, f'{VERSION_FILE_PREFIX}{vid}.xlsx')):
+        seq += 1
+        vid = f'{stamp}_{seq}'
+    dst = os.path.join(versions_dir, f'{VERSION_FILE_PREFIX}{vid}.xlsx')
+    shutil.copy2(src, dst)
+    meta = _read_versions_meta(model)
+    meta[vid] = {
+        'filename': os.path.basename(src),
+        'size': os.path.getsize(dst),
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'note': note or '',
+        'source': source,  # auto: 变更前自动快照 / upload: 上传的新版本
+    }
+    _write_versions_meta(model, meta)
+    logger.info('型号 %s 数据包已记录版本 %s（来源: %s）', model, vid, source)
+    return vid
+
+
+def _version_path(model, vid):
+    """根据版本 ID 定位快照文件；vid 仅允许字母数字下划线连字符，防止路径穿越"""
+    if not re.match(r'^[\w-]+$', vid or ''):
+        raise ValueError('版本 ID 不合法')
+    path = os.path.join(_model_versions_dir(model), f'{VERSION_FILE_PREFIX}{vid}.xlsx')
+    if not os.path.isfile(path):
+        raise ValueError(f'版本 {vid} 不存在')
+    return path
+
+
+def _list_versions(model):
+    versions_dir = _model_versions_dir(model)
+    if not os.path.isdir(versions_dir):
+        return []
+    meta = _read_versions_meta(model)
+    items = []
+    for name in sorted(os.listdir(versions_dir)):
+        if not name.startswith(VERSION_FILE_PREFIX) or not name.lower().endswith('.xlsx'):
+            continue
+        vid = name[len(VERSION_FILE_PREFIX):-len('.xlsx')]
+        path = os.path.join(versions_dir, name)
+        info = meta.get(vid, {})
+        items.append({
+            'id': vid,
+            'filename': name,
+            'size': os.path.getsize(path),
+            'time': info.get('time') or datetime.fromtimestamp(
+                os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S'),
+            'note': info.get('note', ''),
+            'source': info.get('source', ''),
+        })
+    items.sort(key=lambda x: x['id'], reverse=True)
+    return items
+
+
+def _validate_xlsx_content(content):
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            if zf.testzip() is not None:
+                raise ValueError('文件内容损坏')
+    except zipfile.BadZipFile:
+        raise ValueError('不是有效的 .xlsx 文件')
+
+
+def _save_new_data_file(model, storage, note=''):
+    """将上传文件保存为型号当前数据包。
+
+    版本语义：旧当前版本先以 'auto' 快照入历史，新文件写入后同样
+    以 'upload' 入历史（携带用户备注），versions/ 保存完整变更谱系。
+    """
+    filename = os.path.basename(storage.filename or '')
+    if not filename.lower().endswith('.xlsx'):
+        raise ValueError('数据包必须是 .xlsx 文件')
+    content = storage.read()
+    _validate_xlsx_content(content)
+    _snapshot_current(model, 'auto')
+
+    root = _model_root(model)
+    for f in os.listdir(root):
+        p = os.path.join(root, f)
+        if os.path.isfile(p) and f.lower().endswith('.xlsx'):
+            os.remove(p)
+    dst = os.path.join(root, filename)
+    with open(dst, 'wb') as out:
+        out.write(content)
+    _parse_cache.pop(model, None)
+
+    new_vid = _snapshot_current(model, 'upload', note=note)
+    logger.info('型号 %s 数据包已更新: %s（%d 字节，版本 %s）', model, filename, len(content), new_vid)
+    return dst
+
+
+def _model_templates(model):
+    """型号模板列表（.docx/.xlsx），附带 templates.json 中配置的报告类型"""
+    tdir = _model_templates_dir(model)
+    templates = []
+    if os.path.isdir(tdir):
+        config = _read_template_config(model)
+        for f in sorted(os.listdir(tdir)):
+            p = os.path.join(tdir, f)
+            if not os.path.isfile(p) or f.startswith('~$'):
+                continue
+            if not f.lower().endswith(('.docx', '.xlsx')):
+                continue
+            stem = os.path.splitext(f)[0]
+            report_type = config.get(f) or config.get(stem) or ''
+            templates.append({
+                'name': f,
+                'report_type': report_type,
+                **_file_info(p)
+            })
+    return templates
+
+
+# 模板报告类型配置文件（位于型号 templates/ 目录，可手工编辑或通过接口保存）
+TEMPLATE_CONFIG_FILENAME = 'templates.json'
+
+
+def _template_config_path(model):
+    return os.path.join(_model_templates_dir(model), TEMPLATE_CONFIG_FILENAME)
+
+
+def _read_template_config(model):
+    path = _template_config_path(model)
+    if os.path.isfile(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return {str(k).strip(): str(v).strip()
+                        for k, v in data.items()
+                        if str(k).strip() and str(v).strip()}
+        except (ValueError, OSError):
+            pass
+    return {}
+
+
+def _write_template_config(model, mapping):
+    os.makedirs(_model_templates_dir(model), exist_ok=True)
+    with open(_template_config_path(model), 'w', encoding='utf-8') as f:
+        json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+
+def _model_summary(model):
+    """型号概览信息（用于总览卡片）"""
+    data_path = _current_data_file(model)
+    has_data = data_path is not None
+    batch_count = 0
+    if has_data:
+        try:
+            parsed = _get_parsed_data(model)
+            batch_count = len(parsed['batch_numbers']) if parsed else 0
+        except ValueError as e:
+            logger.warning('型号 %s 数据包解析失败: %s', model, e)
+    return {
+        'model': model,
+        'has_data': has_data,
+        'data_file': _file_info(data_path) if data_path else None,
+        'batch_count': batch_count,
+        'template_count': len(_model_templates(model)),
+    }
+
+
+@app.route('/api/database/overview', methods=['GET'])
+def database_overview():
+    """型号总览：一个型号目录 = 一个型号"""
+    root = get_data_root()
+    models = []
+    if os.path.isdir(root):
+        for name in sorted(os.listdir(root)):
+            if not os.path.isdir(os.path.join(root, name)):
+                continue
+            if name.startswith('.') or name.startswith('~$'):
+                continue
+            try:
+                models.append(_model_summary(name))
+            except ValueError as e:
+                logger.warning('跳过无法识别的目录 %s: %s', name, e)
+    return jsonify({'success': True, 'data_root': os.path.basename(root), 'models': models})
+
+
+@app.route('/api/database/models', methods=['POST'])
+def database_create_model():
+    """新建型号，可选同时上传初始数据包"""
+    try:
+        model = _validate_model_name(request.form.get('name', ''))
+        root = os.path.join(get_data_root(), model)
+        if os.path.exists(root):
+            return jsonify({'error': f'型号 "{model}" 已存在'}), 400
+        os.makedirs(os.path.join(root, 'templates'))
+        os.makedirs(os.path.join(root, 'versions'))
+        file = request.files.get('file')
+        if file and file.filename:
+            _save_new_data_file(model, file, note='初始上传')
+        logger.info('已创建型号: %s', model)
+        return jsonify({'success': True, 'model': model})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("创建型号失败")
+        return jsonify({'error': '创建型号失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>', methods=['GET'])
+def database_model_detail(model):
+    """型号详情：数据包信息、批次、模板列表、版本列表"""
+    try:
+        data_path = _current_data_file(model)
+        has_data = data_path is not None
+        batches, param_count = [], 0
+        doc_stats = {'通用文档': 0, '单机文档': 0}
+        parse_error = None
+        if has_data:
+            try:
+                parsed = _get_parsed_data(model)
+                batches = parsed['batch_numbers']
+                param_count = len(parsed['parameters'])
+                doc_stats = {
+                    '通用文档': len(parsed['documents']['通用文档']),
+                    '单机文档': sum(len(d) for d in parsed['documents']['单机文档'].values()),
+                }
+            except ValueError as e:
+                parse_error = str(e)
+        return jsonify({
+            'success': True,
+            'model': model,
+            'has_data': has_data,
+            'data_file': _file_info(data_path) if data_path else None,
+            'batch_numbers': batches,
+            'parameter_count': param_count,
+            'document_stats': doc_stats,
+            'parse_error': parse_error,
+            'templates': _model_templates(model),
+            'versions': _list_versions(model),
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/database/models/<model>/data', methods=['POST'])
+def database_upload_data(model):
+    """上传新数据包（当前版本自动快照）"""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': '没有文件上传'}), 400
+    try:
+        _save_new_data_file(model, file, note=(request.form.get('note') or '').strip())
+        return jsonify({'success': True, 'data_file': _file_info(_current_data_file(model))})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("上传数据包失败")
+        return jsonify({'error': '上传数据包失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/templates', methods=['POST'])
+def database_upload_template(model):
+    """上传模板（.docx/.xlsx）到型号 templates/，同名覆盖"""
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': '没有文件上传'}), 400
+    try:
+        name = os.path.basename(file.filename)
+        if not name.lower().endswith(('.docx', '.xlsx')):
+            return jsonify({'error': '模板必须是 .docx 或 .xlsx 文件'}), 400
+        tdir = _model_templates_dir(model)
+        os.makedirs(tdir, exist_ok=True)
+        dst = os.path.join(tdir, name)
+        if os.path.exists(dst):
+            logger.info('型号 %s 模板覆盖: %s', model, name)
+        file.save(dst)
+        return jsonify({'success': True, 'template': {'name': name, **_file_info(dst)}})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("上传模板失败")
+        return jsonify({'error': '上传模板失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/generate', methods=['POST'])
+def database_generate(model):
+    """按型号模板与批次号生成报告（数据直接来自型号当前数据包）"""
+    data = request.json or {}
+    template_filename = data.get('template_filename')
+    batch_number = data.get('batch_number')
+    if not template_filename or not batch_number:
+        return jsonify({'error': '缺少 template_filename 或 batch_number'}), 400
+
+    try:
+        parsed = _get_parsed_data(model)
+        if not parsed:
+            return jsonify({'error': f'型号 "{model}" 尚无数据包，请先上传'}), 400
+        if batch_number not in parsed['batch_numbers']:
+            return jsonify({'error': f'批次号 "{batch_number}" 不存在'}), 400
+
+        template_path = os.path.join(_model_templates_dir(model), os.path.basename(template_filename))
+        if not os.path.isfile(template_path):
+            return jsonify({'error': f'模板 "{template_filename}" 不存在'}), 404
+        if not template_filename.lower().endswith(('.docx', '.xlsx')):
+            return jsonify({'error': '模板必须是 .docx 或 .xlsx 文件'}), 400
+
+        template_kind = get_template_kind(template_filename)
+        output_ext = '.xlsx' if template_kind == 'excel' else '.docx'
+        template_stem = os.path.splitext(template_filename)[0]
+        resolved_name = report_generator.get_document_name(
+            parsed['documents'], template_stem, batch_number
+        )
+        output_filename = build_safe_output_filename(resolved_name, batch_number, output_ext)
+
+        output_stream = io.BytesIO()
+        success, param_count, doc_count, error_msg = report_generator.generate_report(
+            template_path, batch_number, parsed['parameters'], parsed['documents'],
+            output_stream, template_filename
+        )
+        if not success:
+            return jsonify({'error': error_msg or '报告生成失败'}), 500
+
+        report_base64 = base64.b64encode(output_stream.getvalue()).decode('utf-8')
+        return jsonify({
+            'success': True,
+            'output_filename': output_filename,
+            'file_type': template_kind,
+            'report_content': report_base64,
+            'statistics': {
+                'batch_number': batch_number,
+                'parameter_replacements': param_count,
+                'document_replacements': doc_count,
+                'total_replacements': param_count + doc_count
+            }
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        logger.exception("生成报告时出错")
+        return jsonify({'error': '生成报告时出错，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/templates/config', methods=['POST'])
+def database_template_config(model):
+    """保存模板报告类型映射（写入 templates/templates.json）"""
+    data = request.json or {}
+    types = data.get('types')
+    if not isinstance(types, dict):
+        return jsonify({'error': '缺少 types 映射'}), 400
+    try:
+        mapping = {}
+        for k, v in types.items():
+            k, v = str(k).strip(), str(v).strip()
+            if k and v:
+                mapping[k] = v
+        existing = {t['name'] for t in _model_templates(model)}
+        existing_stems = {os.path.splitext(n)[0] for n in existing}
+        unknown = [k for k in mapping if k not in existing and k not in existing_stems]
+        if unknown:
+            return jsonify({'error': f'以下键没有对应的模板文件: {", ".join(unknown)}'}), 400
+        _write_template_config(model, mapping)
+        logger.info('型号 %s 模板报告类型已更新（%d 项）', model, len(mapping))
+        return jsonify({'success': True, 'types': mapping})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("保存模板报告类型失败")
+        return jsonify({'error': '保存模板报告类型失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/data/update', methods=['POST'])
+def database_update_data(model):
+    """将预览表格中的单元格编辑写回当前数据包（写回前当前版本自动快照）"""
+    data = request.json or {}
+    edits = data.get('edits')
+    note = (data.get('note') or '').strip()
+    if not isinstance(edits, list) or not edits:
+        return jsonify({'error': '缺少编辑内容'}), 400
+
+    clean_edits = []
+    for e in edits:
+        if not isinstance(e, dict):
+            return jsonify({'error': '编辑内容格式不正确'}), 400
+        pid = str(e.get('param_id', '')).strip()
+        field = str(e.get('field', '')).strip()
+        if not pid or field not in ('value', 'description'):
+            return jsonify({'error': f'编辑内容不合法: {pid or "?"} {field or "?"}'}), 400
+        if field == 'value' and not str(e.get('batch', '')).strip():
+            return jsonify({'error': f'值编辑缺少批次号: {pid}'}), 400
+        clean_edits.append({
+            'param_id': pid,
+            'field': field,
+            'batch': str(e.get('batch', '')).strip(),
+            'value': e.get('value', ''),
+        })
+
+    try:
+        path = _current_data_file(model)
+        if not path:
+            return jsonify({'error': f'型号 "{model}" 尚无数据包，请先上传'}), 400
+
+        with open(path, 'rb') as f:
+            content = f.read()
+
+        out_stream = io.BytesIO()
+        updated, missing, err = report_generator.update_data_cells(
+            io.BytesIO(content), clean_edits, out_stream
+        )
+        if err:
+            return jsonify({'error': err}), 400
+        if updated == 0:
+            return jsonify({
+                'error': '没有可写回的编辑（参数/批次未在数据包中定位到）',
+                'missing': missing
+            }), 400
+
+        # 版本谱系：写回前旧版本自动快照，写回后的新内容同样入历史
+        _snapshot_current(model, 'auto')
+        with open(path, 'wb') as f:
+            f.write(out_stream.getvalue())
+        _parse_cache.pop(model, None)
+        _snapshot_current(model, 'edit', note=note or '表格编辑保存')
+
+        logger.info('型号 %s 数据包单元格编辑已写回: %d 处', model, updated)
+        return jsonify({
+            'success': True,
+            'updated': updated,
+            'missing': missing,
+            'data_file': _file_info(path)
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("写回数据包失败")
+        return jsonify({'error': '写回数据包失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/generate_all', methods=['POST'])
+def database_generate_all(model):
+    """按批次号对该型号的全部模板一键生成报告，打包为 zip 返回"""
+    data = request.json or {}
+    batch_number = data.get('batch_number')
+    if not batch_number:
+        return jsonify({'error': '缺少 batch_number'}), 400
+
+    try:
+        parsed = _get_parsed_data(model)
+        if not parsed:
+            return jsonify({'error': f'型号 "{model}" 尚无数据包，请先上传'}), 400
+        if batch_number not in parsed['batch_numbers']:
+            return jsonify({'error': f'批次号 "{batch_number}" 不存在'}), 400
+
+        templates = _model_templates(model)
+        if not templates:
+            return jsonify({'error': f'型号 "{model}" 暂无模板，请先上传'}), 400
+
+        zip_buf = io.BytesIO()
+        results = []
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for t in templates:
+                template_path = os.path.join(_model_templates_dir(model), t['name'])
+                template_kind = get_template_kind(t['name'])
+                output_ext = '.xlsx' if template_kind == 'excel' else '.docx'
+                template_stem = os.path.splitext(t['name'])[0]
+                resolved_name = report_generator.get_document_name(
+                    parsed['documents'], template_stem, batch_number
+                )
+                output_name = build_safe_output_filename(resolved_name, batch_number, output_ext)
+
+                output_stream = io.BytesIO()
+                success, param_count, doc_count, error_msg = report_generator.generate_report(
+                    template_path, batch_number, parsed['parameters'], parsed['documents'],
+                    output_stream, t['name']
+                )
+                if not success:
+                    results.append({
+                        'template': t['name'], 'success': False, 'error': error_msg or '生成失败'
+                    })
+                    continue
+
+                # zip 内文件名去重（不同模板可能解析出相同的文档名）
+                arcname, seq = output_name, 1
+                stem, ext = os.path.splitext(output_name)
+                while arcname in zf.namelist():
+                    seq += 1
+                    arcname = f'{stem}_{seq}{ext}'
+                zf.writestr(arcname, output_stream.getvalue())
+                results.append({
+                    'template': t['name'], 'success': True,
+                    'output_filename': output_name,
+                    'parameter_replacements': param_count,
+                    'document_replacements': doc_count,
+                })
+
+        ok_count = sum(1 for r in results if r['success'])
+        zip_buf.seek(0)
+        return jsonify({
+            'success': ok_count > 0,
+            'zip_filename': f'{model}_{batch_number}_报告合集_{stamp}.zip',
+            'report_content': base64.b64encode(zip_buf.getvalue()).decode('utf-8'),
+            'results': results,
+            'statistics': {
+                'total_templates': len(templates),
+                'success_count': ok_count,
+                'failed_count': len(results) - ok_count,
+            }
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        logger.exception("一键生成全部报告时出错")
+        return jsonify({'error': '一键生成全部报告时出错，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/parameters', methods=['GET'])
+def database_model_parameters(model):
+    """型号全部批次与参数（供一致性对比页），形状与 /api/consistency/parameters 相同"""
+    try:
+        parsed = _get_parsed_data(model)
+        if not parsed:
+            return jsonify({'error': f'型号 "{model}" 尚无数据包，请先上传'}), 400
+        return jsonify({
+            'success': True,
+            'batch_numbers': parsed['batch_numbers'],
+            'parameters': [
+                {'id': p['id'], 'description': p['description'], 'values': p['data']}
+                for p in parsed['parameters']
+            ]
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/database/models/<model>/versions/<vid>/download', methods=['GET'])
+def database_version_download(model, vid):
+    """下载指定版本的数据包"""
+    try:
+        path = _version_path(model, vid)
+        return send_file(path, as_attachment=True, download_name=f'{model}_数据包_{vid}.xlsx')
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+
+
+@app.route('/api/database/models/<model>/versions/<vid>/restore', methods=['POST'])
+def database_version_restore(model, vid):
+    """恢复指定版本为当前数据包（恢复前当前版本自动快照）"""
+    try:
+        src = _version_path(model, vid)
+        _snapshot_current(model, 'restore')
+        root = _model_root(model)
+        for f in os.listdir(root):
+            p = os.path.join(root, f)
+            if os.path.isfile(p) and f.lower().endswith('.xlsx'):
+                os.remove(p)
+        shutil.copy2(src, os.path.join(root, os.path.basename(src)))
+        _parse_cache.pop(model, None)
+        logger.info('型号 %s 已恢复版本 %s', model, vid)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception("恢复版本失败")
+        return jsonify({'error': '恢复版本失败，请查看服务端日志'}), 500
+
+
+@app.route('/api/database/models/<model>/versions/<vid>', methods=['DELETE'])
+def database_version_delete(model, vid):
+    """删除指定版本快照"""
+    try:
+        path = _version_path(model, vid)
+        os.remove(path)
+        meta = _read_versions_meta(model)
+        meta.pop(vid, None)
+        _write_versions_meta(model, meta)
+        logger.info('型号 %s 已删除版本 %s', model, vid)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except OSError:
+        logger.exception("删除版本失败")
+        return jsonify({'error': '删除版本失败，请查看服务端日志'}), 500
 
 
 @app.errorhandler(404)

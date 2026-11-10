@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 .env
 .claude/
+.zcode/
 
 # 打包产物与二进制资产
 packaging/
