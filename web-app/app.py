@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """
+【已冻结】Python 后端自 v1.1.2 起冻结：仅修复严重缺陷，不再新增功能。
+新功能一律在 Go 后端（go-backend/）实现——单二进制、无 Python 依赖。
+
 单机数据包报告生成器 - Flask Web 后端（内存版）
 在内存中处理文件，不保存到磁盘，生成报告后由前端弹出保存对话框
 """
-
 import os
 import re
 import sys
@@ -970,15 +972,30 @@ def database_update_data(model):
         if not isinstance(e, dict):
             return jsonify({'error': '编辑内容格式不正确'}), 400
         pid = str(e.get('param_id', '')).strip()
+        doc_id = str(e.get('doc_id', '')).strip()
         field = str(e.get('field', '')).strip()
+        batch = str(e.get('batch', '')).strip()
+
+        if doc_id:
+            # 文档编辑：Number / Name（batch 填批次定位单机文档，留空定位通用文档）
+            if field not in ('number', 'name'):
+                return jsonify({'error': f'编辑内容不合法: {doc_id} {field or "?"}'}), 400
+            clean_edits.append({
+                'doc_id': doc_id,
+                'field': field,
+                'batch': batch,
+                'value': e.get('value', ''),
+            })
+            continue
+
         if not pid or field not in ('value', 'description'):
             return jsonify({'error': f'编辑内容不合法: {pid or "?"} {field or "?"}'}), 400
-        if field == 'value' and not str(e.get('batch', '')).strip():
+        if field == 'value' and not batch:
             return jsonify({'error': f'值编辑缺少批次号: {pid}'}), 400
         clean_edits.append({
             'param_id': pid,
             'field': field,
-            'batch': str(e.get('batch', '')).strip(),
+            'batch': batch,
             'value': e.get('value', ''),
         })
 
@@ -1103,7 +1120,7 @@ def database_generate_all(model):
 
 @app.route('/api/database/models/<model>/parameters', methods=['GET'])
 def database_model_parameters(model):
-    """型号全部批次与参数（供一致性对比页），形状与 /api/consistency/parameters 相同"""
+    """型号全部批次、参数与文档数据（供内容预览与一致性对比页）"""
     try:
         parsed = _get_parsed_data(model)
         if not parsed:
@@ -1114,7 +1131,11 @@ def database_model_parameters(model):
             'parameters': [
                 {'id': p['id'], 'description': p['description'], 'values': p['data']}
                 for p in parsed['parameters']
-            ]
+            ],
+            'documents': {
+                'generic': parsed['documents']['通用文档'],
+                'batch_docs': parsed['documents']['单机文档'],
+            }
         })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -1168,6 +1189,14 @@ def database_version_delete(model, vid):
     except OSError:
         logger.exception("删除版本失败")
         return jsonify({'error': '删除版本失败，请查看服务端日志'}), 500
+
+
+@app.after_request
+def add_no_cache_header(response):
+    """程序更新后浏览器不得继续使用旧缓存：静态资源强制协商缓存（未变更时 304）"""
+    if not request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.errorhandler(404)

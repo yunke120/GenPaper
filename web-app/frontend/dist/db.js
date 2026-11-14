@@ -15,6 +15,9 @@ const DatabasePage = (() => {
     let previewChecked = new Set();   // 预览表中显示的批次列
     let previewModel = null;          // 预览数据所属型号（切换型号时重置勾选）
     let cellEdits = new Map();        // 未保存的单元格编辑: key -> value
+    let previewTab = 'params';        // params: 参数数据 / docs: 文档数据
+    let previewDocs = null;           // { generic: {id:{number,name}}, batch_docs: {batch:{...}} }
+    let docsBatch = '';               // 文档数据页当前查看的单机文档批次
 
     // ---------- 基础工具 ----------
     async function fetchJson(url, options) {
@@ -101,6 +104,8 @@ const DatabasePage = (() => {
         previewParams = [];
         previewChecked = new Set();
         previewModel = null;
+        previewDocs = null;
+        docsBatch = '';
         cellEdits = new Map();
         updateSaveState();
     }
@@ -195,19 +200,30 @@ const DatabasePage = (() => {
             select.innerHTML = '<option value="">无批次数据</option>';
         }
 
-        // 模板列表（每个模板右侧带导出按钮，显示配置的报告类型）
+        // 模板列表（导出按钮 + 报告类型徽标 + 占位符校验徽标）
         const tplEl = $('dbTemplateList');
         if (detail.templates && detail.templates.length) {
-            tplEl.innerHTML = detail.templates.map((t) => `
+            tplEl.innerHTML = detail.templates.map((t) => {
+                let checkBadge = '';
+                if (t.unmatched === 0) {
+                    checkBadge = '<button class="tpl-check ok" data-action="tplcheck" data-template="' + escapeHtml(t.name) + '" title="占位符全部匹配，点击查看明细">✓ 校验通过</button>';
+                } else if (t.unmatched > 0) {
+                    checkBadge = '<button class="tpl-check warn" data-action="tplcheck" data-template="' + escapeHtml(t.name) + '" title="点击查看未匹配占位符">⚠ ' + t.unmatched + ' 个未匹配</button>';
+                } else {
+                    checkBadge = '<button class="tpl-check unset" data-action="tplcheck" data-template="' + escapeHtml(t.name) + '" title="上传数据包后可校验">— 待校验</button>';
+                }
+                return `
                 <div class="template-item">
                     <span class="template-icon">${t.name.toLowerCase().endsWith('.xlsx') ? '📊' : '📝'}</span>
                     <span class="template-name">
                         ${escapeHtml(t.name)}
                         <span class="tpl-badge${t.report_type ? '' : ' unset'}">${escapeHtml(t.report_type || '未标注类型')}</span>
+                        ${checkBadge}
                     </span>
                     <span class="template-meta">${fmtSize(t.size)} · ${escapeHtml(t.mtime)}</span>
                     <button class="btn btn-mini btn-success" data-action="export" data-template="${escapeHtml(t.name)}" disabled>⬇ 导出</button>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         } else {
             tplEl.innerHTML = `
                 <div class="empty-state">
@@ -252,13 +268,14 @@ const DatabasePage = (() => {
         }).join('');
     }
 
-    // ---------- 数据内容预览（批次勾选 + 可编辑） ----------
+    // ---------- 数据内容预览（参数 / 文档双标签；参数可编辑） ----------
     async function loadPreview() {
         const wrap = $('dbPreviewWrap');
         try {
             const data = await fetchJson(`/api/database/models/${encodeURIComponent(currentModel)}/parameters`);
             previewBatches = data.batch_numbers || [];
             previewParams = data.parameters || [];
+            previewDocs = data.documents || { generic: {}, batch_docs: {} };
 
             // 切换型号时重置勾选；同一型号保持用户勾选
             if (previewModel !== currentModel) {
@@ -270,11 +287,31 @@ const DatabasePage = (() => {
             previewChecked = new Set([...previewChecked].filter((b) => previewBatches.includes(b)));
 
             renderBatchChecks();
-            renderPreviewTable();
+            renderPreview();
             updateSaveState();
         } catch (error) {
             wrap.innerHTML = `<div class="empty-state">❌ ${escapeHtml(error.message)}</div>`;
             $('dbBatchChecks').innerHTML = '';
+        }
+    }
+
+    // ---------- 预览标签页切换 ----------
+    function setPreviewTab(tab) {
+        previewTab = tab === 'docs' ? 'docs' : 'params';
+        $('dbTabParams').classList.toggle('active', previewTab === 'params');
+        $('dbTabDocs').classList.toggle('active', previewTab === 'docs');
+        $('dbBatchChecks').style.display = previewTab === 'params' ? 'flex' : 'none';
+        $('dbPreviewHint').textContent = previewTab === 'params'
+            ? '勾选批次列控制预览范围；单元格可直接编辑（支持多行），保存后写入数据包并自动快照到版本历史。'
+            : 'Number / Name 可直接编辑并保存写回"文档"sheet（自动快照）；文档 ID 为定位键不可修改。';
+        renderPreview();
+    }
+
+    function renderPreview() {
+        if (previewTab === 'docs') {
+            renderDocsView();
+        } else {
+            renderPreviewTable();
         }
     }
 
@@ -341,8 +378,82 @@ const DatabasePage = (() => {
             : '<div class="empty-state"><p>没有匹配的参数</p></div>';
     }
 
+    // ---------- 文档数据（只读：通用文档 + 按批次单机文档） ----------
+    function setDocsBatch(batch) {
+        docsBatch = batch || '';
+        renderDocsView();
+    }
+
+    function docRowHtml(id, item, batch) {
+        const numKey = `doc:${id}|number|${batch}`;
+        const nameKey = `doc:${id}|name|${batch}`;
+        const number = cellEdits.get(numKey) ?? (item.number || '');
+        const name = cellEdits.get(nameKey) ?? (item.name || '');
+        return '<tr>' +
+            `<td class="mono">${escapeHtml(id)}</td>` +
+            `<td class="mono editable${cellEdits.has(numKey) ? ' dirty' : ''}"` +
+            ` contenteditable="true" data-doc="${escapeHtml(id)}" data-field="number" data-batch="${escapeHtml(batch)}">${escapeHtml(number)}</td>` +
+            `<td class="editable${cellEdits.has(nameKey) ? ' dirty' : ''}"` +
+            ` contenteditable="true" data-doc="${escapeHtml(id)}" data-field="name" data-batch="${escapeHtml(batch)}">${escapeHtml(name)}</td>` +
+            '</tr>';
+    }
+
+    function docRowsHtml(docs, batch) {
+        const keyword = ($('dbPreviewSearch').value || '').trim().toLowerCase();
+        const ids = Object.keys(docs).filter((id) => {
+            if (!keyword) return true;
+            const it = docs[id];
+            return id.toLowerCase().includes(keyword) ||
+                (it.number || '').toLowerCase().includes(keyword) ||
+                (it.name || '').toLowerCase().includes(keyword);
+        });
+        const head = '<tr><th class="mono">文档ID</th><th class="mono">Number</th><th>Name</th></tr>';
+        const body = ids.map((id) => docRowHtml(id, docs[id], batch)).join('');
+        return { head, body, count: ids.length };
+    }
+
+    function renderDocsView() {
+        const wrap = $('dbPreviewWrap');
+        const generic = previewDocs.generic || {};
+        const batchDocs = previewDocs.batch_docs || {};
+        const batches = Object.keys(batchDocs);
+        if (!docsBatch || !batches.includes(docsBatch)) {
+            docsBatch = batches[0] || '';
+        }
+
+        if (!Object.keys(generic).length && !batches.length) {
+            wrap.innerHTML = '<div class="empty-state"><p>"文档" sheet 不存在或没有文档数据</p></div>';
+            return;
+        }
+
+        let html = '';
+
+        // 单机文档（先展示批次选择）
+        if (batches.length) {
+            html += '<div class="docs-toolbar">' +
+                '<span class="batch-check-label">单机文档批次:</span>' +
+                `<select onchange="DatabasePage.setDocsBatch(this.value)">` +
+                batches.map((b) => `<option value="${escapeHtml(b)}"${b === docsBatch ? ' selected' : ''}>${escapeHtml(b)}</option>`).join('') +
+                '</select></div>';
+            const g = docRowsHtml(batchDocs[docsBatch] || {}, docsBatch);
+            html += `<div class="docs-subtitle">单机文档 — 批次 ${escapeHtml(docsBatch)}（${g.count} 项）</div>`;
+            html += g.count
+                ? `<table class="data-table"><thead>${g.head}</thead><tbody>${g.body}</tbody></table>`
+                : '<div class="empty-state"><p>该批次没有文档</p></div>';
+        }
+
+        // 通用文档
+        const gen = docRowsHtml(generic, '');
+        html += `<div class="docs-subtitle">通用文档（${gen.count} 项）</div>`;
+        html += gen.count
+            ? `<table class="data-table"><thead>${gen.head}</thead><tbody>${gen.body}</tbody></table>`
+            : '<div class="empty-state"><p>没有通用文档</p></div>';
+
+        wrap.innerHTML = html;
+    }
+
     function filterPreview() {
-        renderPreviewTable();
+        renderPreview();
     }
 
     // ---------- 编辑保存 ----------
@@ -362,8 +473,18 @@ const DatabasePage = (() => {
         }
         const edits = [];
         for (const [key, value] of cellEdits) {
-            const [paramId, field, batch] = key.split('|');
-            edits.push({ param_id: paramId, field, batch: batch || '', value });
+            if (key.startsWith('doc:')) {
+                // 文档编辑：doc:<doc_id>|<field>|<batch>
+                const parts = key.split('|');
+                const docId = parts[0].slice(4); // 去掉 'doc:' 前缀
+                const field = parts[1];
+                const batch = parts[2] || '';
+                edits.push({ doc_id: docId, field, batch, value });
+            } else {
+                // 参数编辑：<param_id>|<field>|<batch>
+                const [paramId, field, batch] = key.split('|');
+                edits.push({ param_id: paramId, field, batch: batch || '', value });
+            }
         }
         const btn = $('dbSaveEditsBtn');
         setBusy(btn, true, '保存中...');
@@ -389,7 +510,7 @@ const DatabasePage = (() => {
 
     function discardEdits() {
         cellEdits = new Map();
-        renderPreviewTable();
+        renderPreview();
         updateSaveState();
         showMessage('已放弃未保存的修改', 'info');
     }
@@ -438,6 +559,38 @@ const DatabasePage = (() => {
             showMessage('保存失败: ' + error.message, 'error');
         } finally {
             setBusy(btn, false);
+        }
+    }
+
+    // ---------- 占位符校验 ----------
+    const kindLabelMap = { param: '参数', doc: '文档引用', doccall: 'doc() 调用', unknown: '未匹配' };
+
+    async function openTplCheckModal(tplName) {
+        if (!currentModel) return;
+        $('dbTplCheckTitle').textContent = '🧪 占位符校验 — ' + tplName;
+        $('dbTplCheckBody').innerHTML = '<div class="loading-panel"><span class="loading"></span>校验中...</div>';
+        openModal('dbTplCheckModal');
+        try {
+            const data = await fetchJson(
+                `/api/database/models/${encodeURIComponent(currentModel)}/templates/${encodeURIComponent(tplName)}/check`);
+            const kindLabel = { param: '参数', doc: '文档引用', doccall: 'doc() 调用', unknown: '未匹配' };
+            const rows = (data.placeholders || []).map((p) => {
+                const bad = p.kind === 'unknown';
+                return `<tr class="${bad ? 'check-bad' : ''}">` +
+                    `<td class="mono">${escapeHtml(p.name)}</td>` +
+                    `<td>${kindLabel[p.kind] || p.kind}</td>` +
+                    `<td>${bad ? '✗ 未在数据包中找到对应数据' : '✓'}</td>` +
+                    '</tr>';
+            }).join('');
+            const summary = data.unmatched && data.unmatched.length
+                ? `<div class="alert">⚠ ${data.unmatched.length} 个占位符未匹配数据，生成时会保留原样或留空。</div>`
+                : '<div class="check-ok-line">✓ 全部占位符均匹配数据包内容。</div>';
+            $('dbTplCheckBody').innerHTML =
+                summary +
+                `<div class="hint-text">共 ${data.total} 个占位符，匹配 ${data.matched} 个。</div>` +
+                (rows ? `<table class="data-table"><thead><tr><th>占位符</th><th>类型</th><th>状态</th></tr></thead><tbody>${rows}</tbody></table>` : '');
+        } catch (error) {
+            $('dbTplCheckBody').innerHTML = `<div class="empty-state">❌ ${escapeHtml(error.message)}</div>`;
         }
     }
 
@@ -624,11 +777,17 @@ const DatabasePage = (() => {
                 const formData = new FormData();
                 formData.append('file', file);
                 try {
-                    await fetchJson(`/api/database/models/${encodeURIComponent(currentModel)}/templates`, {
+                    const data = await fetchJson(`/api/database/models/${encodeURIComponent(currentModel)}/templates`, {
                         method: 'POST',
                         body: formData
                     });
                     ok += 1;
+                    // 上传即校验：有未匹配占位符时立即告警
+                    if (data.check && data.check.unmatched && data.check.unmatched.length) {
+                        const names = data.check.unmatched.slice(0, 3).join('、') +
+                            (data.check.unmatched.length > 3 ? ' 等' : '');
+                        showMessage(`${file.name}: ⚠ ${data.check.unmatched.length} 个占位符未匹配（${names}），点击模板上的校验徽标查看明细`, 'warning');
+                    }
                 } catch (error) {
                     fail += 1;
                     showMessage(`${file.name}: ${error.message}`, 'error');
@@ -721,8 +880,13 @@ const DatabasePage = (() => {
             }
         });
 
-        // 模板列表按钮（导出）
+        // 模板列表按钮（导出 / 占位符校验）
         $('dbTemplateList').addEventListener('click', (e) => {
+            const checkBtn = e.target.closest('button[data-action="tplcheck"]');
+            if (checkBtn && checkBtn.dataset.template) {
+                openTplCheckModal(checkBtn.dataset.template);
+                return;
+            }
             const btn = e.target.closest('button[data-action="export"]');
             if (btn && btn.dataset.template) {
                 generateReport(btn.dataset.template);
@@ -751,8 +915,16 @@ const DatabasePage = (() => {
         const previewWrap = $('dbPreviewWrap');
         previewWrap.addEventListener('input', (e) => {
             const cell = e.target.closest('td.editable');
-            if (!cell || !cell.dataset.param) return;
-            const key = editKey(cell.dataset.param, cell.dataset.field || 'value', cell.dataset.batch);
+            if (!cell) return;
+            let key;
+            if (cell.dataset.doc) {
+                // 文档编辑：Number / Name（文档 ID 为定位键不可改）
+                key = `doc:${cell.dataset.doc}|${cell.dataset.field || 'number'}|${cell.dataset.batch || ''}`;
+            } else if (cell.dataset.param) {
+                key = editKey(cell.dataset.param, cell.dataset.field || 'value', cell.dataset.batch);
+            } else {
+                return;
+            }
             cellEdits.set(key, cell.innerText.replace(/\r/g, ''));
             cell.classList.add('dirty');
             updateSaveState();
@@ -777,6 +949,9 @@ const DatabasePage = (() => {
         selectConsistency,
         selectBatch,
         filterPreview,
+        setPreviewTab,
+        setDocsBatch,
+        openTplCheckModal,
         discardEdits,
         saveEdits,
         openTplConfigModal,

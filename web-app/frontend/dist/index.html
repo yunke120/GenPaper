@@ -4,13 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>单机数据包报告生成器</title>
-    <link rel="stylesheet" href="app.css">
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+    <link rel="apple-touch-icon" href="logo.png">
+    <link rel="stylesheet" href="app.css?v=1.1.3">
 </head>
 <body>
     <div class="app-shell">
         <!-- 左侧导航：各型号 + 工具页 -->
         <aside class="sidebar">
             <div class="sidebar-brand">
+                <img src="logo.png?v=1.1.3" class="brand-logo" alt="GenPaper">
                 <div class="brand-title">单机数据包<br>报告生成器</div>
             </div>
 
@@ -31,7 +35,7 @@
             </nav>
 
             <div class="sidebar-footer">
-                <div>版本 1.1.0</div>
+                <div>版本 1.1.3</div>
                 <div>后端状态: <span id="backendStatus" class="status status-checking">检查中...</span></div>
             </div>
         </aside>
@@ -88,6 +92,10 @@
                 <div class="panel glass">
                     <div class="panel-head">
                         <h3>📋 数据库内容预览</h3>
+                        <div class="preview-tabs">
+                            <button class="tab-pill active" id="dbTabParams" onclick="DatabasePage.setPreviewTab('params')">参数数据</button>
+                            <button class="tab-pill" id="dbTabDocs" onclick="DatabasePage.setPreviewTab('docs')">文档数据</button>
+                        </div>
                         <div class="panel-tools">
                             <span class="dirty-count" id="dbDirtyCount"></span>
                             <button class="btn btn-mini" id="dbDiscardBtn" onclick="DatabasePage.discardEdits()" disabled>放弃修改</button>
@@ -96,13 +104,13 @@
                     </div>
                     <div class="table-toolbar">
                         <input type="text" id="dbPreviewSearch" class="search-input"
-                               placeholder="搜索参数 ID 或描述..." oninput="DatabasePage.filterPreview()">
+                               placeholder="搜索参数 ID / 描述 / 文档编号、名称..." oninput="DatabasePage.filterPreview()">
                     </div>
                     <div class="batch-check-row" id="dbBatchChecks"></div>
                     <div class="table-wrap" id="dbPreviewWrap">
                         <div class="empty-state"><div class="empty-icon">📭</div><p>该型号还没有数据包</p></div>
                     </div>
-                    <div class="hint-text">勾选批次列控制预览范围；单元格可直接点击编辑（支持多行），保存后写入数据包并自动快照到版本历史。</div>
+                    <div class="hint-text" id="dbPreviewHint">勾选批次列控制预览范围；单元格可直接点击编辑（支持多行），保存后写入数据包并自动快照到版本历史。</div>
                 </div>
 
                 <div class="panel glass">
@@ -223,7 +231,18 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
-    <script src="db.js"></script>
+    <!-- 占位符校验弹窗 -->
+    <div class="modal-mask" id="dbTplCheckModal" style="display: none;">
+        <div class="modal modal-wide">
+            <h3 id="dbTplCheckTitle">🧪 占位符校验</h3>
+            <div id="dbTplCheckBody"></div>
+            <div class="modal-actions">
+                <button class="btn" onclick="DatabasePage.closeModal('dbTplCheckModal')">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js?v=1.1.3"></script>
+    <script src="db.js?v=1.1.3"></script>
 </body>
 </html>

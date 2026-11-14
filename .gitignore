@@ -21,6 +21,12 @@ packaging/
 *.rar
 *.7z
 
+# 图标资产（前端 favicon/logo 与主图源文件）
+!web-app/frontend/dist/favicon.ico
+!web-app/frontend/dist/favicon-*.png
+!web-app/frontend/dist/logo.png
+!icon/icon_1024.png
+
 # Office 文档与临时文件（templates/ 下的模板文件除外，作为解析格式的基准样例）
 *.xls
 *.xlsx

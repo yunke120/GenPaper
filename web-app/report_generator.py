@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 """
+【已冻结】本模块自 v1.1.2 起随 Python 后端冻结：仅修复严重缺陷，不再新增功能。
+新功能一律在 Go 后端（go-backend/）实现。
+
 单机数据包报告生成器核心模块
 支持 Word (.docx) 模板（docxtpl 参数替换 + 文本框兜底处理）
 和 Excel (.xlsx) 模板（遍历所有 sheet 的单元格替换占位符）
 """
-
 import re
 import os
 import io
@@ -433,17 +435,66 @@ def generate_excel_report(template_file, batch, param_data, doc_data, output_fil
         return False, 0, 0, str(e)
 
 
+def _locate_doc_cell(ws_doc, doc_id, batch):
+    """在"文档"sheet 中定位 doc_id 所在组，返回该组的 (row, col_number, col_name)。
+    batch 为空时优先通用文档组，其次单机文档批次组；指定 batch 时仅在该批次组内定位。
+    行列约定与 parse_excel_data 一致：第 1 行组名，第 2 行 ID/Number/Name 表头，数据从第 3 行起，
+    每组占 3 列。"""
+    batch_re = re.compile(r'^[A-Za-z][A-Za-z0-9]*-\d+$')
+    max_col = ws_doc.max_column or 1
+    groups = []  # (start_col, name, is_batch)
+    col = 1
+    while col + 2 <= max_col:
+        header = ws_doc.cell(row=2, column=col).value
+        name = ws_doc.cell(row=1, column=col).value
+        header = str(header).strip() if header is not None else ''
+        name = str(name).strip() if name is not None else ''
+        if header == 'ID':
+            groups.append((col, name, bool(batch_re.match(name))))
+            col += 3
+        else:
+            col += 1
+
+    targets = []
+    for start_col, name, is_batch in groups:
+        for row in range(3, (ws_doc.max_row or 3) + 1):
+            v = ws_doc.cell(row=row, column=start_col).value
+            if v is not None and str(v).strip() == doc_id:
+                targets.append({
+                    'row': row,
+                    'col_number': start_col + 1,
+                    'col_name': start_col + 2,
+                    'group': name,
+                    'is_batch': is_batch,
+                })
+    if not targets:
+        return None
+    if batch:
+        for t in targets:
+            if t['group'] == batch:
+                return t
+        return None
+    for t in targets:
+        if not t['is_batch']:
+            return t
+    return targets[0]
+
+
 def update_data_cells(excel_file, edits, output_file):
     """
-    将单元格编辑写回数据包的“数据”sheet（openpyxl 直接定位单元格，保留原结构与样式）。
+    将单元格编辑写回数据包的“数据”与“文档”sheet（openpyxl 直接定位单元格，保留原结构与样式）。
 
-    行列约定与 parse_excel_data 一致：第 1 行为批次表头（从 D 列起），
-    B 列为参数 ID（第 2 行为表头行），参数值从第 3 行起。
+    行列约定与 parse_excel_data 一致：
+    数据 sheet：第 1 行为批次表头（从 D 列起），B 列为参数 ID（第 2 行为表头行），参数值从第 3 行起。
+    文档 sheet：第 1 行组名，第 2 行 ID/Number/Name 表头，数据从第 3 行起，每组占 3 列。
 
     Args:
         excel_file: 数据包路径或文件对象
-        edits: 编辑列表 [{'param_id': str, 'field': 'value'|'description',
-                          'batch': str（value 编辑必填）, 'value': str}]
+        edits: 编辑列表，两种形态：
+               [{'param_id': str, 'field': 'value'|'description',
+                 'batch': str（value 编辑必填）, 'value': str}]
+               [{'doc_id': str, 'field': 'number'|'name',
+                 'batch': str（单机文档编辑填批次，通用文档留空）, 'value': str}]
         output_file: 写回结果保存目标（路径或流）
 
     Returns:
@@ -468,6 +519,8 @@ def update_data_cells(excel_file, edits, output_file):
         if not data_sheet:
             return 0, [], "未找到'数据'sheet"
         ws = wb[data_sheet]
+        doc_sheet = _find_sheet('文档')
+        ws_doc = wb[doc_sheet] if doc_sheet else None
 
         # 批次列映射（openpyxl 第 1 行，从第 4 列/D 列起）
         batch_cols = {}
@@ -486,7 +539,29 @@ def update_data_cells(excel_file, edits, output_file):
         updated, missing = 0, []
         for edit in edits:
             pid = str(edit.get('param_id', '')).strip()
+            doc_id = str(edit.get('doc_id', '')).strip()
             field = str(edit.get('field', '')).strip()
+            new_value = edit.get('value', '')
+            new_value = '' if new_value is None else str(new_value)
+
+            if doc_id:
+                # 文档编辑：Number / Name（文档 ID 为定位键，不可改）
+                if not ws_doc:
+                    missing.append(f"{doc_id}@{field}(无文档sheet)")
+                    continue
+                if field not in ('number', 'name'):
+                    missing.append(f"{doc_id}({field or '?'})")
+                    continue
+                loc = _locate_doc_cell(ws_doc, doc_id, str(edit.get('batch', '')).strip())
+                if not loc:
+                    batch_label = str(edit.get('batch', '')).strip() or '通用'
+                    missing.append(f"{doc_id}@{batch_label}")
+                    continue
+                col = loc['col_number'] if field == 'number' else loc['col_name']
+                ws_doc.cell(row=loc['row'], column=col).value = new_value
+                updated += 1
+                continue
+
             if not pid or pid not in param_rows:
                 missing.append(f"{pid or '?'}({field or '?'})")
                 continue
