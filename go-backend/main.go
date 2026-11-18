@@ -104,6 +104,8 @@ func handleModelsDispatch(w http.ResponseWriter, r *http.Request) {
 		handleDatabaseGenerateAll(w, r, model)
 	case action == "parameters" && r.Method == http.MethodGet:
 		handleDatabaseParameters(w, r, model)
+	case action == "open_folder" && sub == "" && r.Method == http.MethodPost:
+		handleDatabaseOpenFolder(w, r, model)
 	case action == "versions" && sub != "" && r.Method == http.MethodGet:
 		handleVersionDownload(w, r, model, sub)
 	case action == "versions" && sub != "" && r.Method == http.MethodPost:

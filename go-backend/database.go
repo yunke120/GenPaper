@@ -531,6 +531,58 @@ func handleDatabaseDetail(w http.ResponseWriter, r *http.Request, model string) 
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// handleDatabaseOpenFolder POST /api/database/models/<model>/open_folder
+// 用系统文件管理器打开该型号的数据包文件夹（型号根目录）。
+// 可选 JSON 参数 {"sub": "templates"|"versions"|""} 用于打开子目录。
+// 说明：GenPaper 只监听 127.0.0.1，后端与浏览器在同一台机器上，
+// 因此由后端调用系统文件管理器即可。
+func handleDatabaseOpenFolder(w http.ResponseWriter, r *http.Request, model string) {
+	var body struct {
+		Sub string `json:"sub"`
+	}
+	// 允许无请求体（部分客户端不发送 JSON）
+	if r.ContentLength > 0 {
+		_ = decodeJSON(r, &body)
+	}
+	root, err := modelRoot(model, true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	target := root
+	switch strings.ToLower(strings.TrimSpace(body.Sub)) {
+	case "", "root", ".":
+		target = root
+	case "templates":
+		target = filepath.Join(root, "templates")
+	case "versions":
+		target = filepath.Join(root, "versions")
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("不支持的子目录: %s", body.Sub))
+		return
+	}
+	if st, serr := os.Stat(target); serr != nil || !st.IsDir() {
+		// 子目录缺失时回退到型号根目录，避免"打不开"的死路
+		if target != root {
+			log.Printf("型号 %s 子目录不存在，回退到型号根目录: %s", model, target)
+			target = root
+		} else {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("型号 %q 目录不存在", model))
+			return
+		}
+	}
+	if err := openFolderInFileManager(target); err != nil {
+		log.Printf("打开文件夹失败: %s: %v", target, err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("打开文件夹失败: %v", err))
+		return
+	}
+	log.Printf("型号 %s 已打开文件夹: %s", model, target)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"path":    target,
+	})
+}
+
 func lenBatchDocs(m map[string]map[string]DocItem) int {
 	n := 0
 	for _, docs := range m {

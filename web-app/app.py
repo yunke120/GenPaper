@@ -14,6 +14,7 @@ import hashlib
 import base64
 import io
 import shutil
+import subprocess
 import logging
 import zipfile
 from datetime import datetime, timedelta
@@ -1139,6 +1140,42 @@ def database_model_parameters(model):
         })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/database/models/<model>/open_folder', methods=['POST'])
+def database_open_folder(model):
+    """用系统文件管理器打开型号的数据包文件夹（仅本机 127.0.0.1 部署有意义）
+
+    可选 JSON 参数 {"sub": "templates"|"versions"|""} 用于打开子目录。
+    """
+    try:
+        root = os.path.abspath(os.path.join(get_data_root(), _validate_model_name(model)))
+        if not os.path.isdir(root):
+            return jsonify({'error': f'型号 "{model}" 不存在'}), 400
+        body = request.get_json(silent=True) or {}
+        sub = str(body.get('sub') or '').strip().lower()
+        target = root
+        if sub in ('templates', 'versions'):
+            target = os.path.join(root, sub)
+            if not os.path.isdir(target):
+                logger.info('型号 %s 子目录 %s 不存在，回退到型号根目录', model, sub)
+                target = root
+        elif sub not in ('', 'root', '.'):
+            return jsonify({'error': f'不支持的子目录: {sub}'}), 400
+
+        if os.name == 'nt':
+            os.startfile(target)  # noqa: S606 - 本机单用户工具
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', target])
+        else:
+            subprocess.Popen(['xdg-open', target])
+        logger.info('型号 %s 已打开文件夹: %s', model, target)
+        return jsonify({'success': True, 'path': target})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except OSError:
+        logger.exception('打开文件夹失败')
+        return jsonify({'error': '打开文件夹失败，请查看服务端日志'}), 500
 
 
 @app.route('/api/database/models/<model>/versions/<vid>/download', methods=['GET'])

@@ -7,14 +7,14 @@
     <link rel="icon" href="favicon.ico" sizes="any">
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
     <link rel="apple-touch-icon" href="logo.png">
-    <link rel="stylesheet" href="app.css?v=1.1.3">
+    <link rel="stylesheet" href="app.css?v=1.1.4">
 </head>
 <body>
     <div class="app-shell">
         <!-- 左侧导航：各型号 + 工具页 -->
         <aside class="sidebar">
             <div class="sidebar-brand">
-                <img src="logo.png?v=1.1.3" class="brand-logo" alt="GenPaper">
+                <img src="logo.png?v=1.1.4" class="brand-logo" alt="GenPaper">
                 <div class="brand-title">单机数据包<br>报告生成器</div>
             </div>
 
@@ -35,7 +35,7 @@
             </nav>
 
             <div class="sidebar-footer">
-                <div>版本 1.1.3</div>
+                <div>版本 1.1.4</div>
                 <div>后端状态: <span id="backendStatus" class="status status-checking">检查中...</span></div>
             </div>
         </aside>
@@ -54,6 +54,7 @@
                 <div class="main-header">
                     <h2 id="modelTitle"></h2>
                     <div class="main-actions">
+                        <button class="btn" onclick="DatabasePage.openModelFolder()" title="在资源管理器中打开该型号的数据包文件夹">📂 打开数据包文件夹</button>
                         <button class="btn" onclick="DatabasePage.openUploadDataModal()">⬆ 上传新数据包</button>
                         <button class="btn" onclick="DatabasePage.openUploadTemplatesModal()">📝 上传模板</button>
                         <button class="btn" onclick="DatabasePage.refreshDetail()">⟳ 刷新</button>
@@ -64,7 +65,10 @@
 
                 <div class="panel-row">
                     <div class="panel glass">
-                        <h3>📦 数据包</h3>
+                        <div class="panel-head">
+                            <h3>📦 数据包</h3>
+                            <button class="btn btn-mini" onclick="DatabasePage.openModelFolder()" title="在资源管理器中打开该型号的数据包文件夹">📂 打开文件夹</button>
+                        </div>
                         <div id="dbDataFileInfo"></div>
                     </div>
                     <div class="panel glass panel-generate">
@@ -242,7 +246,7 @@
         </div>
     </div>
 
-    <script src="app.js?v=1.1.3"></script>
-    <script src="db.js?v=1.1.3"></script>
+    <script src="app.js?v=1.1.4"></script>
+    <script src="db.js?v=1.1.4"></script>
 </body>
 </html>

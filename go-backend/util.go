@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const version = "1.1.0"
+const version = "1.1.4"
 
 func timeNow() time.Time { return time.Now() }
 

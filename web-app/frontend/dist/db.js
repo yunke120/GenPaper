@@ -721,6 +721,25 @@ const DatabasePage = (() => {
         }
     }
 
+    // ---------- 打开数据包文件夹 ----------
+    // 由后端（本机 127.0.0.1 服务）调用系统文件管理器打开 数据包/<型号>/
+    async function openModelFolder(sub) {
+        if (!currentModel) {
+            showMessage('请先选择一个型号', 'warning');
+            return;
+        }
+        try {
+            const data = await fetchJson(`/api/database/models/${encodeURIComponent(currentModel)}/open_folder`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sub: sub || '' })
+            });
+            showMessage(`已打开文件夹：${data.path || currentModel}`, 'success');
+        } catch (error) {
+            showMessage('打开文件夹失败: ' + error.message, 'error');
+        }
+    }
+
     // ---------- 上传数据包 ----------
     function openUploadDataModal() {
         if (!currentModel) return;
@@ -963,6 +982,7 @@ const DatabasePage = (() => {
         closeModal,
         openUploadDataModal,
         submitUploadData,
+        openModelFolder,
         openUploadTemplatesModal,
         submitUploadTemplates,
         downloadVersion,
