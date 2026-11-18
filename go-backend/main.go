@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ======================================================================
@@ -36,15 +38,41 @@ func main() {
 	if port == "" {
 		port = "5000"
 	}
-	log.Printf("启动服务: http://127.0.0.1:%s", port)
+	pageURL := "http://127.0.0.1:" + port
+	log.Printf("启动服务: %s", pageURL)
 	fmt.Println("==================================================")
 	fmt.Println("  GenPaper 单机数据包报告生成器 (Go 版)")
 	fmt.Println("==================================================")
-	fmt.Printf("  访问地址: http://127.0.0.1:%s\n", port)
-	fmt.Printf("  按 Ctrl+C 停止服务\n")
+	fmt.Printf("  访问地址: %s\n", pageURL)
+	fmt.Println("  托盘图标右键可复制地址或退出")
 	fmt.Println("==================================================")
-	if err := http.ListenAndServe("127.0.0.1:"+port, mux); err != nil {
+
+	// 先完成端口绑定，绑定失败时控制台仍然可见，便于看到错误
+	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+	if err != nil {
 		log.Fatalf("服务启动失败: %v", err)
+	}
+
+	// 启动后最小化到系统托盘；右键托盘图标可「复制IP地址」或「退出」
+	// GENPAPER_NO_TRAY=1 可禁用托盘（保留控制台，便于调试）
+	noTray := strings.TrimSpace(os.Getenv("GENPAPER_NO_TRAY")) != ""
+	if !noTray {
+		startTray(pageURL)
+	} else {
+		log.Printf("GENPAPER_NO_TRAY 已设置，保持控制台窗口运行")
+	}
+
+	// 控制台已隐藏，由程序自己把页面交给默认浏览器（GENPAPER_NO_BROWSER=1 可禁用）
+	if strings.TrimSpace(os.Getenv("GENPAPER_NO_BROWSER")) == "" {
+		go func() {
+			// 等服务真正可以响应再打开，避免浏览器先到而显示连接失败
+			time.Sleep(600 * time.Millisecond)
+			launchBrowser(pageURL)
+		}()
+	}
+
+	if err := http.Serve(listener, mux); err != nil {
+		log.Fatalf("服务运行失败: %v", err)
 	}
 }
 
